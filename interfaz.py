@@ -5,6 +5,13 @@ import os
 from pyvista import _vtk
 import pprint
 import matplotlib.pyplot as plt
+
+from kivy.app import App
+from kivy.uix.widget import Widget
+from kivy.graphics import PushMatrix, PopMatrix, Rotate, Translate
+from kivy.uix.image import Image
+from kivy.clock import Clock
+import math
 #Convencion de NED: X norte, Y este, Z abajo
 
 #Inicializar variables
@@ -86,324 +93,131 @@ estado = aircraft_state(alpha=alpha, beta=beta, climb=climb, u=u, v=v, w=w, p=p,
 pprint.pprint(estado)
 
 
-#A;adir el path del STL
 ruta = os.path.join(os.path.dirname(__file__), "kf21v3.stl")
+
+# ------------------ CARGAR MODELO ------------------
 mesh = pv.read(ruta)
 
+# Centrar el modelo en el origen
 mesh.translate(-np.array(mesh.center), inplace=True)
 
-#Ejes del body
+# ------------------ MATRIZ NED → PYVISTA ------------------
+C_ned_to_pv = np.array([
+    [0, 1, 0],   # X_ned → Y_pv
+    [1, 0, 0],   # Y_ned → X_pv
+    [0, 0, -1]   # Z_ned → -Z_pv
+])
+
+# ------------------ ROTAR AVIÓN ------------------
+mesh_rotated = mesh.copy()
+mesh_rotated.points = (C_ned_to_pv @ R_zyx @ mesh.points.T).T
+
+# ------------------ EJES BODY ------------------
 longitud_ejes = mesh.length * 0.5
+
 eje_x_body = pv.Arrow(start=(0,0,0), direction=(0,-1,0), scale=longitud_ejes)
 eje_y_body = pv.Arrow(start=(0,0,0), direction=(-1,0,0), scale=longitud_ejes)
 eje_z_body = pv.Arrow(start=(0,0,0), direction=(0,0,-1), scale=longitud_ejes)
 
-ejes = [eje_x_body, eje_y_body, eje_z_body]
+# Función para rotar cualquier objeto (malla o eje)
+def rotar_actor(actor, R, C):
+    puntos = actor.points
+    puntos_rotados = (C @ R @ puntos.T).T
+    actor.points = puntos_rotados
 
-mesh = pv.read(ruta)
+# Rotar ejes con la misma transformación del avión
+rotar_actor(eje_x_body, R_zyx, C_ned_to_pv)
+rotar_actor(eje_y_body, R_zyx, C_ned_to_pv)
+rotar_actor(eje_z_body, R_zyx, C_ned_to_pv)
 
-
+# ------------------ VISUALIZACIÓN ------------------
 plotter = pv.Plotter()
 
-actor_mesh = plotter.add_mesh(mesh, color="gray")
+# Avión
+plotter.add_mesh(mesh_rotated, color="gray")
 
+# Ejes body (ya rotados correctamente)
+plotter.add_mesh(eje_x_body, color="red")
+plotter.add_mesh(eje_y_body, color="white")
+plotter.add_mesh(eje_z_body, color="blue")
 
-actor_x = plotter.add_mesh(eje_x_body, color="red")
-actor_y = plotter.add_mesh(eje_y_body, color="white")
-actor_z = plotter.add_mesh(eje_z_body, color="blue")
-
-#Cambiando la orientacion del NED para que siga la convencion
+# ------------------ SISTEMA NED VISUAL ------------------
 transform = _vtk.vtkTransform()
 transform.RotateX(180)
 transform.RotateZ(90)
 
 axes_NED = _vtk.vtkAxesActor()
 axes_NED.SetTotalLength(1, 1, 1)
-axes_NED.origin = (0, 0, 0)
 axes_NED.SetUserTransform(transform)
+
 plotter.add_orientation_widget(axes_NED)
 
 plotter.show_grid()
 plotter.show()
 
+# Funcion para plotear los tres planos de actitud (pitch, roll, heading)
 
+def plot_attitude(phi, theta, psi):
+    fig, axs = plt.subplots(1, 3, figsize=(15, 5))
 
-# ─────────────────────────────────────────────
-#  COLOUR PALETTE  (dark cockpit aesthetic)
-# ─────────────────────────────────────────────
-BG       = "#0a0d12"
-PANEL    = "#111820"
-BEZEL    = "#1a2535"
-ACCENT   = "#00d4ff"
-GREEN    = "#39ff14"
-ORANGE   = "#ff6b35"
-RED      = "#ff3b3b"
-YELLOW   = "#ffd700"
-WHITE    = "#e8eef4"
-DIM      = "#3a5060"
-HORIZON_SKY   = "#1a4a7a"
-HORIZON_EARTH = "#5a3a1a"
+    # 1. PITCH (plano XZ)
+    ax = axs[0]
+    ax.axhline(0)  # horizonte
 
-# ─────────────────────────────────────────────
-#  INSTRUMENT DRAWING HELPERS
-# ─────────────────────────────────────────────
+    theta_rad = np.radians(theta)
+    length = 1
 
-def draw_bezel(ax, title="", title_color=ACCENT):
-    """Draw a round instrument bezel on given axes."""
-    ax.set_facecolor(PANEL)
-    ax.set_xlim(-1.1, 1.1)
-    ax.set_ylim(-1.1, 1.1)
+    x = [-length*np.cos(theta_rad), length*np.cos(theta_rad)]
+    z = [-length*np.sin(theta_rad), length*np.sin(theta_rad)]
+
+    ax.plot(x, z)
+
+    ax.set_title(f"Pitch (θ = {theta}°)")
+    ax.set_xlim(-1.5, 1.5)
+    ax.set_ylim(-1.5, 1.5)
     ax.set_aspect('equal')
-    ax.axis('off')
-    # outer ring
-    outer = plt.Circle((0, 0), 1.08, color=BEZEL, zorder=0)
-    inner = plt.Circle((0, 0), 1.0,  color="#050810", zorder=1)
-    ax.add_patch(outer)
-    ax.add_patch(inner)
-    if title:
-        ax.text(0, -1.18, title, ha='center', va='top',
-                fontsize=7, color=title_color,
-                fontfamily='monospace', fontweight='bold')
+    ax.grid()
 
-def draw_tick_ring(ax, n_major=36, n_minor=None, r=0.90, length=0.06, color=DIM):
-    """Draw tick marks around a circle."""
-    for i in range(n_major):
-        ang = np.radians(i * 360 / n_major) - np.pi/2
-        x0 = r * np.cos(ang);         y0 = r * np.sin(ang)
-        x1 = (r-length)*np.cos(ang);  y1 = (r-length)*np.sin(ang)
-        ax.plot([x0, x1], [y0, y1], color=color, lw=1, zorder=2)
+    # -------------------------
+    # 2. HEADING (plano XY)
+    # -------------------------
+    ax = axs[1]
 
-def needle(ax, angle_deg, length=0.75, width=3, color=WHITE, zorder=5):
-    """Draw instrument needle from centre."""
-    ang = np.radians(angle_deg - 90)
-    ax.annotate("", xy=(length*np.cos(ang), length*np.sin(ang)),
-                xytext=(0, 0),
-                arrowprops=dict(arrowstyle="-|>", color=color,
-                                lw=width, mutation_scale=12),
-                zorder=zorder)
+    psi_rad = np.radians(psi)
 
-# ─────────────────────────────────────────────
-#  INDIVIDUAL INSTRUMENTS
-# ─────────────────────────────────────────────
+    x = np.sin(psi_rad)
+    y = np.cos(psi_rad)
 
-def render_adi_image(phi_deg, theta_deg, size=400):
-    """
-    Render the moving horizon ball as an RGBA numpy array.
+    ax.arrow(0, 0, x, y, head_width=0.1)
 
-    Strategy:
-      1. Build a square RGBA canvas (sky above, earth below).
-      2. Shift the split vertically by pitch (theta): positive pitch → horizon moves down.
-      3. Rotate the entire canvas by roll (phi): positive roll → right bank.
-      4. Clip to a circle mask.
-      5. Draw pitch ladder lines into the pixel array.
-
-    Returns an RGBA uint8 array of shape (size, size, 4).
-    """
-    # ── colours ──────────────────────────────────────────────────────────────
-    SKY_TOP    = np.array([10,  60, 120, 255], dtype=np.float32)   # deep blue
-    SKY_BOT    = np.array([30, 120, 200, 255], dtype=np.float32)   # lighter near horizon
-    EARTH_TOP  = np.array([90,  55,  20, 255], dtype=np.float32)   # lighter near horizon
-    EARTH_BOT  = np.array([50,  30,  10, 255], dtype=np.float32)   # dark brown
-
-    S = size
-    half = S // 2
-
-    # pixel coordinate grid, normalised to [-1, 1]
-    y_px, x_px = np.mgrid[0:S, 0:S]
-    xn = (x_px - half) / half   # -1 … +1  (right is positive)
-    yn = (half - y_px) / half   # -1 … +1  (up is positive)
-
-    # ── pitch shift: 1 unit = 90° of pitch, clip to avoid going completely off ──
-    pitch_shift = np.clip(theta_deg / 90.0, -0.92, 0.92)
-
-    # ── roll: rotate the (xn, yn) sample coordinates by -phi so the image
-    #    appears to rotate by +phi visually ──
-    phi_r = np.radians(-phi_deg)
-    cos_p, sin_p = np.cos(phi_r), np.sin(phi_r)
-    xr =  cos_p * xn + sin_p * yn   # rotated x
-    yr = -sin_p * xn + cos_p * yn   # rotated y
-
-    # ── sky / earth split based on rotated y coordinate ──
-    # A pixel belongs to SKY if yr > pitch_shift (horizon line), else EARTH
-    sky_frac = np.clip((yr - pitch_shift) / 0.4, 0.0, 1.0)   # 0=earth, 1=sky
-
-    # Gradient within each half for realism
-    # Sky: blend SKY_TOP / SKY_BOT based on how far above horizon
-    sky_t  = np.clip((yr - pitch_shift) / 1.2, 0.0, 1.0)[..., None]
-    earth_t = np.clip((pitch_shift - yr) / 1.2, 0.0, 1.0)[..., None]
-
-    sky_col   = SKY_TOP   * sky_t   + SKY_BOT   * (1 - sky_t)
-    earth_col = EARTH_BOT * earth_t + EARTH_TOP  * (1 - earth_t)
-
-    sky_mask = (yr >= pitch_shift)[..., None].astype(np.float32)
-    img = sky_col * sky_mask + earth_col * (1 - sky_mask)
-
-    # ── horizon line: thin white band at yr ≈ pitch_shift ──
-    near_horizon = np.abs(yr - pitch_shift) < (1.5 / half)
-    img[near_horizon] = [255, 255, 255, 255]
-
-    # ── pitch ladder: horizontal lines at ±10°, ±20° ──
-    for pitch_step in [-20, -10, 10, 20]:
-        line_y = pitch_shift + pitch_step / 90.0
-        width  = 0.25 if abs(pitch_step) == 10 else 0.35
-        near   = (np.abs(yr - line_y) < (1.2 / half)) & (np.abs(xr) < width)
-        img[near] = [220, 220, 220, 255]
-        # small tick label would be per-pixel text which is hard; skip here
-
-    # ── circular clip mask ──
-    r2 = xn**2 + yn**2
-    inside = r2 <= 1.0
-    img[~inside] = [15, 20, 28, 0]   # transparent outside
-
-    return np.clip(img, 0, 255).astype(np.uint8)
-
-
-def draw_attitude_indicator(ax, phi_deg, theta_deg):
-    """
-    Attitude indicator rendered as a pixel image (moving horizon ball)
-    with a fixed aircraft reticle and roll arc drawn on top in data coordinates.
-    """
-    S = 400
-    img = render_adi_image(phi_deg, theta_deg, size=S)
-
-    # ── background bezel ──
-    ax.set_facecolor(PANEL)
-    ax.set_xlim(-1.15, 1.15)
-    ax.set_ylim(-1.15, 1.15)
+    ax.set_title(f"Heading (ψ = {psi}°)")
+    ax.set_xlim(-1.5, 1.5)
+    ax.set_ylim(-1.5, 1.5)
     ax.set_aspect('equal')
-    ax.axis('off')
+    ax.grid()
 
-    # Draw the rendered pixel image inside data coords [-1, 1]
-    ax.imshow(img, extent=[-1, 1, -1, 1], origin='upper',
-              zorder=2, interpolation='bilinear')
+    # -------------------------
+    # 3. ROLL (plano YZ)
+    # -------------------------
+    ax = axs[2]
 
-    # ── outer bezel ring (drawn on top of image) ──
-    bezel_ring = plt.Circle((0, 0), 1.0, color=BEZEL,
-                             fill=False, lw=8, zorder=5)
-    ax.add_patch(bezel_ring)
+    ax.axhline(0)  # horizonte
 
-    # ── roll arc (fixed, at r=0.90) with tick marks ──
-    arc_r = 0.90
-    for angle_offset in [-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60]:
-        # arc tick positions are fixed; the image rotates behind them
-        ang = np.radians(angle_offset - 90)   # 0° offset = top
-        r0 = arc_r - (0.07 if angle_offset % 30 == 0 else 0.04)
-        x0, y0 = arc_r * np.cos(ang), arc_r * np.sin(ang)
-        x1, y1 = r0    * np.cos(ang), r0    * np.sin(ang)
-        lw = 1.8 if angle_offset % 30 == 0 else 1.0
-        ax.plot([x0, x1], [y0, y1], color=WHITE, lw=lw, zorder=6)
+    phi_rad = np.radians(phi)
 
-    # ── bank pointer triangle (moves with phi, points inward from arc) ──
-    bank_ang = np.radians(-phi_deg - 90)   # top = 0°, positive roll → right
-    tri_tip_r  = arc_r - 0.09
-    tri_base_r = arc_r + 0.005
-    tip_x  = tri_tip_r  * np.cos(bank_ang)
-    tip_y  = tri_tip_r  * np.sin(bank_ang)
-    left_x = tri_base_r * np.cos(bank_ang - np.radians(4))
-    left_y = tri_base_r * np.sin(bank_ang - np.radians(4))
-    rght_x = tri_base_r * np.cos(bank_ang + np.radians(4))
-    rght_y = tri_base_r * np.sin(bank_ang + np.radians(4))
-    tri = mpatches.Polygon(
-        [[tip_x, tip_y], [left_x, left_y], [rght_x, rght_y]],
-        closed=True, color=YELLOW, zorder=7)
-    ax.add_patch(tri)
+    y = [-length*np.cos(phi_rad), length*np.cos(phi_rad)]
+    z = [-length*np.sin(phi_rad), length*np.sin(phi_rad)]
 
-    # ── fixed aircraft reticle (always centred, never rotates) ──
-    # Wings: two horizontal bars with downward stubs
-    wing_inner, wing_outer, stub = 0.12, 0.42, 0.10
-    for sign in [-1, 1]:
-        ax.plot([sign*wing_inner, sign*wing_outer], [0, 0],
-                color=ORANGE, lw=5, solid_capstyle='round', zorder=8)
-        ax.plot([sign*wing_outer, sign*wing_outer], [0, -stub],
-                color=ORANGE, lw=5, solid_capstyle='round', zorder=8)
+    ax.plot(y, z)
 
-    # Centre dot
-    ax.plot(0, 0, 'o', color=ORANGE, ms=7, zorder=9)
-    # Centre crosshair tick
-    ax.plot([0, 0], [-0.04, 0.04], color=ORANGE, lw=3, zorder=9)
+    ax.set_title(f"Roll (φ = {phi}°)")
+    ax.set_xlim(-1.5, 1.5)
+    ax.set_ylim(-1.5, 1.5)
+    ax.set_aspect('equal')
+    ax.grid()
 
-    # ── readout labels ──
-    ax.text(-1.10, 0.92, f"φ {phi_deg:+.1f}°", fontsize=7.5,
-            color=YELLOW, fontfamily='monospace', fontweight='bold', zorder=10)
-    ax.text(-1.10, 0.74, f"θ {theta_deg:+.1f}°", fontsize=7.5,
-            color=YELLOW, fontfamily='monospace', fontweight='bold', zorder=10)
+    plt.tight_layout()
+    plt.show()
 
-    # ── title ──
-    ax.text(0, -1.12, "ATTITUDE", ha='center', va='top',
-            fontsize=7, color=ACCENT,
-            fontfamily='monospace', fontweight='bold', zorder=10)
-
-
-def draw_compass(ax, psi_deg, heading_color=ACCENT):
-    """Heading / compass rose."""
-    draw_bezel(ax, "HEADING")
-    draw_tick_ring(ax, n_major=72, r=0.88, length=0.05, color=DIM)
-    draw_tick_ring(ax, n_major=36, r=0.88, length=0.09, color=WHITE)
-
-    # Cardinal labels rotating with heading
-    for label, ang in [("N",0),("E",90),("S",180),("W",270)]:
-        a = np.radians(ang - psi_deg) - np.pi/2
-        lx = 0.72 * np.cos(a)
-        ly = 0.72 * np.sin(a)
-        col = RED if label == "N" else WHITE
-        ax.text(lx, ly, label, ha='center', va='center',
-                fontsize=9, color=col, fontweight='bold',
-                fontfamily='monospace', zorder=5)
-
-    # Fixed lubber line (top)
-    ax.plot([0, 0], [0.85, 0.97], color=RED, lw=3, zorder=6)
-
-    # Heading readout
-    ax.text(0, -0.45, f"{psi_deg % 360:05.1f}°", ha='center',
-            fontsize=11, color=heading_color,
-            fontfamily='monospace', fontweight='bold', zorder=7)
-    ax.text(0, 0.1, "HDG", ha='center', fontsize=7,
-            color=DIM, fontfamily='monospace', zorder=7)
-
-# ─────────────────────────────────────────────
-#  TERMINAL / DATA READOUT
-# ─────────────────────────────────────────────
-
-def format_terminal(state, case_name, case_desc):
-    phi, theta, psi = np.degrees(state["attitude"])
-    vb = state["velocities_body"]
-    vn = state["velocities_ned"]
-    alpha = state["angles"]["alpha"]
-    beta  = state["angles"]["beta"]
-    gamma = state["angles"]["gamma"]
-    V     = state["airspeed"]
-    p, q, r = state["angular_rates"]
-
-    lines = [
-        f"{'═'*52}",
-        f"  FLIGHT CASE: {case_name}",
-        f"  {case_desc}",
-        f"{'─'*52}",
-        f"  EULER ANGLES",
-        f"    φ (Roll)    = {phi:+8.3f} °",
-        f"    θ (Pitch)   = {theta:+8.3f} °",
-        f"    ψ (Yaw)     = {psi % 360:8.3f} °",
-        f"{'─'*52}",
-        f"  BODY FRAME  [u, v, w]",
-        f"    u = {vb[0]:+8.3f} m/s   (forward)",
-        f"    v = {vb[1]:+8.3f} m/s   (right  )",
-        f"    w = {vb[2]:+8.3f} m/s   (down   )",
-        f"    V = {V:8.3f} m/s   (airspeed)",
-        f"{'─'*52}",
-        f"  NED FRAME   [Vn, Ve, Vd]",
-        f"    Vn = {vn[0]:+8.3f} m/s  (North)",
-        f"    Ve = {vn[1]:+8.3f} m/s  (East )",
-        f"    Vd = {vn[2]:+8.3f} m/s  (Down )",
-        f"{'─'*52}",
-        f"  AERODYNAMIC ANGLES",
-        f"    α (AoA)     = {alpha:+8.3f} °",
-        f"    β (Sideslip)= {beta:+8.3f} °",
-        f"    γ (Climb)   = {gamma:+8.3f} °",
-        f"{'─'*52}",
-        f"  ANGULAR RATES",
-        f"    p (Roll) ={p:+7.4f} rad/s",
-        f"    q (Pitch)={q:+7.4f} rad/s",
-        f"    r (Yaw)  ={r:+7.4f} rad/s",
-        f"{'═'*52}",
-    ]
-    return "\n".join(lines)
+# Ejemplo
+plot_attitude(phi=phi, theta=theta, psi=psi)
