@@ -5,23 +5,16 @@ import os
 from pyvista import _vtk
 import pprint
 import matplotlib.pyplot as plt
-
-from kivy.app import App
-from kivy.uix.widget import Widget
-from kivy.graphics import PushMatrix, PopMatrix, Rotate, Translate
-from kivy.uix.image import Image
-from kivy.clock import Clock
-import math
 #Convencion de NED: X norte, Y este, Z abajo
 
 #Inicializar variables
 alpha, beta, climb, u, v, w, p, q, r, phi, theta, psi = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
-# Voy a hacer un menu sencillo para que el usuario pueda elegir cual de los tres escenarios de vuelo quiere ver
+# Voy a hacer un menu sencillo para que el usuario pueda elegir cual de los tres escenarios de vuelo quiere ver o si quiere uno personalizado
 
-respuesta = input("Por favor ingrese el numero del caso de vuelo que desea visualizar: \n1. Vuelo recto y nivelado\n2. Ascenso\n3. Giro\n")
-while respuesta not in ["1", "2", "3"]:
-        respuesta = input("Opcion no valida, por favor ingrese 1, 2 o 3: ")
+respuesta = input("Por favor ingrese el numero del caso de vuelo que desea visualizar: \n1. Vuelo recto y nivelado\n2. Ascenso\n3. Giro\n4. Personalizado\n")
+while respuesta not in ["1", "2", "3", "4"]:
+        respuesta = input("Opcion no valida, por favor ingrese 1, 2, 3 o 4: ")
 if respuesta == "1":
     phi = 0
     theta = 0
@@ -39,19 +32,24 @@ elif respuesta == "2":
     w = 0
     print("Para el ascenso, vamos a trabajar con estos angulos {phi, theta, psi} = {0, 10, 0} grados y con velocidades en el cuerpo de {u, v, w} = {100, 0, 0} m/s    ")
 elif respuesta == "3":
-    phi = 20
+    phi = -20
     theta = 5
     psi = 30
     u = 100
     v = 0
     w = 0
-    print("Para el giro, vamos a trabajar con estos angulos {phi, theta, psi} = {20, 5, 30} grados y con velocidades en el cuerpo de {u, v, w} = {100, 0, 0} m/s    ")
-    
-v_body = np.array([u, v, w])
+    print("Para el giro, vamos a trabajar con estos angulos {phi, theta, psi} = {-20, 5, 30} grados y con velocidades en el cuerpo de {u, v, w} = {100, 0, 0} m/s    ")
+elif respuesta == "4":
+    phi = float(input("Ingrese el angulo de roll (phi) en grados: "))
+    theta = float(input("Ingrese el angulo de pitch (theta) en grados: "))
+    psi = float(input("Ingrese el angulo de yaw (psi) en grados: "))
+    u = float(input("Ingrese la velocidad en el eje X del cuerpo (u) en m/s: "))
+    v = float(input("Ingrese la velocidad en el eje Y del cuerpo (v) en m/s: "))
+    w = float(input("Ingrese la velocidad en el eje Z del cuerpo (w) en m/s: "))
+    print(f"Para el caso personalizado, vamos a trabajar con estos angulos {{phi, theta, psi}} = {{{phi}, {theta}, {psi}}} grados y con velocidades en el cuerpo de {{u, v, w}} = {{{u}, {v}, {w}}} m/s    ")
 
-#Aca viene la parte logica, lo que voy a hacer es crear una funcion donde voy a simualar una IMU y meter p,q,r
-# la funcion va a aplicar la matriz de transformacion para llegar a las angular rates, las cuales voy a integrar para obtener los angulos de Euler,
-#  y luego voy a usar esos angulos para rotar el modelo 3D del avion, y asi mostrar la orientacion del avion en cada caso de vuelo.
+v_body = np.array([u, v, w])
+# La matriz de rotacion para cambiar del body al NED
 
 def rotation_matrix(phi, theta, psi, v_body):
     phi_rad = np.radians(phi)
@@ -158,6 +156,7 @@ plotter.show()
 # Funcion para plotear los tres planos de actitud (pitch, roll, heading)
 
 def plot_attitude(phi, theta, psi):
+    
     fig, axs = plt.subplots(1, 3, figsize=(15, 5))
 
     # 1. PITCH (plano XZ)
@@ -219,5 +218,4 @@ def plot_attitude(phi, theta, psi):
     plt.tight_layout()
     plt.show()
 
-# Ejemplo
 plot_attitude(phi=phi, theta=theta, psi=psi)
