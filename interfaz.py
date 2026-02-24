@@ -70,15 +70,44 @@ def rotation_matrix(phi, theta, psi, v_body):
 
 R_zyx, v_NED, phi, theta, psi = rotation_matrix(phi, theta, psi, v_body)
 
+# =============================================================================
+# AERODYNAMIC ANGLES
+# =============================================================================
+
+def angle_of_attack(u, w):
+    """
+    Alpha (α) — Angle of Attack [deg]
+    Angle between the velocity vector projected on the XZ body plane and
+    the body X-axis. Defined as atan2(w, u).
+    """
+    return np.rad2deg(np.arctan2(w, u))
+
+def sideslip_angle(u, v, w):
+    """
+    Beta (β) — Sideslip Angle [deg]
+    Angle between the total velocity vector and the body XZ plane.
+    Defined as atan2(v, sqrt(u²+w²)) or equivalently asin(v/V).
+    """
+    V = np.sqrt(u**2 + v**2 + w**2)
+    return np.rad2deg(np.arctan2(v, np.sqrt(u**2 + w**2)))
+
+def climb_angle(alpha_deg, pitch_deg):
+    """
+    Gamma (γ) — Climb Angle [deg]
+    Relationship: pitch = alpha + gamma  →  gamma = pitch - alpha
+    Valid when sideslip is zero (wings-level flight).
+    """
+    return pitch_deg - alpha_deg
+
 
 #Este coso que dio el profe, todavia no entiendo para que sirve, pero lo dejo por las dudas.
 def aircraft_state(alpha, beta, climb ,u, v, w, p, q, r, phi, theta, psi, v_body, v_NED=v_NED):
     "Returns aircraft state values in a structured format"
     state_values = {
         "angles": {
-            "alpha": alpha, #Angle of attack [deg]
-            "beta": beta,   #Sideslip angle [deg]
-            "gamma": climb, #Climb angle [deg]
+            "alpha": float(alpha), #Angle of attack [deg]
+            "beta": float(beta),   #Sideslip angle [deg]
+            "gamma": float(climb), #Climb angle [deg]
         },
         "velocities_body": np.array([u, v, w]), #Velocities in body frame [m/s]
         "velocities_ned": v_NED,  #Velocities in NED frame [m/s]
@@ -87,7 +116,7 @@ def aircraft_state(alpha, beta, climb ,u, v, w, p, q, r, phi, theta, psi, v_body
     }
     return state_values
 
-estado = aircraft_state(alpha=alpha, beta=beta, climb=climb, u=u, v=v, w=w, p=p, q=q, r=r, phi=phi, theta=theta, psi=psi, v_body=v_body)
+estado = aircraft_state(alpha=angle_of_attack(u,w), beta=sideslip_angle(u,v,w), climb=climb_angle(alpha,theta), u=u, v=v, w=w, p=p, q=q, r=r, phi=phi, theta=theta, psi=psi, v_body=v_body)
 pprint.pprint(estado)
 
 
