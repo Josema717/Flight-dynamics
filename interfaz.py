@@ -1,10 +1,8 @@
 import numpy as np
-from stl import mesh
-import pyvista as pv
-import os 
-from pyvista import _vtk
 import pprint
 import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+from matplotlib.transforms import Affine2D
 #Convencion de NED: X norte, Y este, Z abajo
 
 #Inicializar variables
@@ -80,7 +78,9 @@ def angle_of_attack(u, w):
     Angle between the velocity vector projected on the XZ body plane and
     the body X-axis. Defined as atan2(w, u).
     """
-    return np.rad2deg(np.arctan2(w, u))
+    alpha = np.rad2deg(np.arctan2(w, u))
+    return alpha
+alpha = angle_of_attack(u, w)
 
 def sideslip_angle(u, v, w):
     """
@@ -90,6 +90,8 @@ def sideslip_angle(u, v, w):
     """
     V = np.sqrt(u**2 + v**2 + w**2)
     return np.rad2deg(np.arctan2(v, np.sqrt(u**2 + w**2)))
+beta = sideslip_angle(u, v, w)
+
 
 def climb_angle(alpha_deg, pitch_deg):
     """
@@ -98,6 +100,7 @@ def climb_angle(alpha_deg, pitch_deg):
     Valid when sideslip is zero (wings-level flight).
     """
     return pitch_deg - alpha_deg
+gamma = climb_angle(alpha, theta)
 
 
 #Este coso que dio el profe, todavia no entiendo para que sirve, pero lo dejo por las dudas.
@@ -119,132 +122,85 @@ def aircraft_state(alpha, beta, climb ,u, v, w, p, q, r, phi, theta, psi, v_body
 estado = aircraft_state(alpha=angle_of_attack(u,w), beta=sideslip_angle(u,v,w), climb=climb_angle(alpha,theta), u=u, v=v, w=w, p=p, q=q, r=r, phi=phi, theta=theta, psi=psi, v_body=v_body)
 pprint.pprint(estado)
 
-
-ruta = os.path.join(os.path.dirname(__file__), "kf21v3.stl")
-
-# ------------------ CARGAR MODELO ------------------
-mesh = pv.read(ruta)
-
-# Centrar el modelo en el origen
-mesh.translate(-np.array(mesh.center), inplace=True)
-
-# ------------------ MATRIZ NED → PYVISTA ------------------
-C_ned_to_pv = np.array([
-    [0, 1, 0],   # X_ned → Y_pv
-    [1, 0, 0],   # Y_ned → X_pv
-    [0, 0, -1]   # Z_ned → -Z_pv
-])
-
-# ------------------ ROTAR AVIÓN ------------------
-mesh_rotated = mesh.copy()
-mesh_rotated.points = (C_ned_to_pv @ R_zyx @ mesh.points.T).T
-
-# ------------------ EJES BODY ------------------
-longitud_ejes = mesh.length * 0.5
-
-eje_x_body = pv.Arrow(start=(0,0,0), direction=(0,-1,0), scale=longitud_ejes)
-eje_y_body = pv.Arrow(start=(0,0,0), direction=(-1,0,0), scale=longitud_ejes)
-eje_z_body = pv.Arrow(start=(0,0,0), direction=(0,0,-1), scale=longitud_ejes)
-
-# Función para rotar cualquier objeto (malla o eje)
-def rotar_actor(actor, R, C):
-    puntos = actor.points
-    puntos_rotados = (C @ R @ puntos.T).T
-    actor.points = puntos_rotados
-
-# Rotar ejes con la misma transformación del avión
-rotar_actor(eje_x_body, R_zyx, C_ned_to_pv)
-rotar_actor(eje_y_body, R_zyx, C_ned_to_pv)
-rotar_actor(eje_z_body, R_zyx, C_ned_to_pv)
-
-# ------------------ VISUALIZACIÓN ------------------
-plotter = pv.Plotter()
-
-# Avión
-plotter.add_mesh(mesh_rotated, color="gray")
-
-# Ejes body (ya rotados correctamente)
-plotter.add_mesh(eje_x_body, color="red")
-plotter.add_mesh(eje_y_body, color="white")
-plotter.add_mesh(eje_z_body, color="blue")
-
-# ------------------ SISTEMA NED VISUAL ------------------
-transform = _vtk.vtkTransform()
-transform.RotateX(180)
-transform.RotateZ(90)
-
-axes_NED = _vtk.vtkAxesActor()
-axes_NED.SetTotalLength(1, 1, 1)
-axes_NED.SetUserTransform(transform)
-
-plotter.add_orientation_widget(axes_NED)
-
-plotter.show_grid()
-plotter.show()
-
 # Funcion para plotear los tres planos de actitud (pitch, roll, heading)
 
-def plot_attitude(phi, theta, psi):
-    
-    fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+# ===== ANGULOS =====
+phi = phi     # roll
+theta = theta   # pitch
+psi = psi     # yaw
 
-    # 1. PITCH (plano XZ)
-    ax = axs[0]
-    ax.axhline(0)  # horizonte
+# ===== CARGAR IMAGENES =====
+img_top = mpimg.imread("top.png")      # vista superior
+img_side = mpimg.imread("side.png")    # vista lateral
+img_front = mpimg.imread("front.png")  # vista frontal
 
-    theta_rad = np.radians(theta)
-    length = 1
+fig, axs = plt.subplots(1, 3, figsize=(12,4))
 
-    x = [-length*np.cos(theta_rad), length*np.cos(theta_rad)]
-    z = [-length*np.sin(theta_rad), length*np.sin(theta_rad)]
+#Ejes de referencia
 
-    ax.plot(x, z)
+# =========================
+# YAW (vista superior)
+# =========================
+ax = axs[0]
 
-    ax.set_title(f"Pitch (θ = {theta}°)")
-    ax.set_xlim(-1.5, 1.5)
-    ax.set_ylim(-1.5, 1.5)
-    ax.set_aspect('equal')
-    ax.grid()
+# Ejes de referencia (sin rotación - fijos)
+ax.arrow(0, 0, 0, 1, head_width=0.1, head_length=0.1, fc='pink', ec='pink', linewidth=2, zorder=1)
+ax.arrow(0, 0, 1, 0, head_width=0.1, head_length=0.1, fc='purple', ec='purple', linewidth=2, zorder=1)
+ax.text(1.1, 0, 'E', fontsize=10, color='purple', fontweight='bold')
+ax.text(0, 1.1, 'N', fontsize=10, color='pink', fontweight='bold')
 
-    # -------------------------
-    # 2. HEADING (plano XY)
-    # -------------------------
-    ax = axs[1]
+im = ax.imshow(img_top, extent=[-1,1,-1,1], zorder=2)
 
-    psi_rad = np.radians(psi)
+psi = -psi  # Invertir el ángulo de yaw para que la rotación sea en la dirección correcta
+trans = Affine2D().rotate_deg(psi) + ax.transData
+im.set_transform(trans)
 
-    x = np.sin(psi_rad)
-    y = np.cos(psi_rad)
+ax.set_title(f"Yaw (ψ) = {psi}°")
+ax.set_xlim(-2,2)
+ax.set_ylim(-2,2)
+ax.axis("off")
 
-    ax.arrow(0, 0, x, y, head_width=0.1)
+# =========================
+# PITCH (vista lateral)
+# =========================
+ax = axs[1]
 
-    ax.set_title(f"Heading (ψ = {psi}°)")
-    ax.set_xlim(-1.5, 1.5)
-    ax.set_ylim(-1.5, 1.5)
-    ax.set_aspect('equal')
-    ax.grid()
+# Ejes de referencia (sin rotación - fijos)
+ax.arrow(0, 0, 1, 0, head_width=0.1, head_length=0.1, fc='purple', ec='purple', linewidth=2, zorder=1)
+ax.arrow(0, 0, 0, -1, head_width=0.1, head_length=0.1, fc='black', ec='black', linewidth=2, zorder=1)
+ax.text(1.1, 0, 'X', fontsize=10, color='purple', fontweight='bold')
+ax.text(0, -1.1, 'Z', fontsize=10, color='black', fontweight='bold')
 
-    # -------------------------
-    # 3. ROLL (plano YZ)
-    # -------------------------
-    ax = axs[2]
+im = ax.imshow(img_side, extent=[-1,1,-1,1], zorder=2)
 
-    ax.axhline(0)  # horizonte
+trans = Affine2D().rotate_deg(theta) + ax.transData
+im.set_transform(trans)
 
-    phi_rad = np.radians(phi)
+ax.set_title(f"Pitch (θ) = {theta}°")
+ax.set_xlim(-2,2)
+ax.set_ylim(-2,2)
+ax.axis("off")
 
-    y = [-length*np.cos(phi_rad), length*np.cos(phi_rad)]
-    z = [-length*np.sin(phi_rad), length*np.sin(phi_rad)]
+# =========================
+# ROLL (vista frontal)
+# =========================
+ax = axs[2]
 
-    ax.plot(y, z)
+# Ejes de referencia (sin rotación - fijos)
+ax.arrow(0, 0, -1, 0, head_width=0.1, head_length=0.1, fc='pink', ec='pink', linewidth=2, zorder=1)
+ax.arrow(0, 0, 0, -1, head_width=0.1, head_length=0.1, fc='black', ec='black', linewidth=2, zorder=1)
+ax.text(-1.1, 0, 'Y', fontsize=10, color='pink', fontweight='bold')
+ax.text(0, -1.1, 'Z', fontsize=10, color='black', fontweight='bold')
 
-    ax.set_title(f"Roll (φ = {phi}°)")
-    ax.set_xlim(-1.5, 1.5)
-    ax.set_ylim(-1.5, 1.5)
-    ax.set_aspect('equal')
-    ax.grid()
+im = ax.imshow(img_front, extent=[-1,1,-1,1], zorder=2)
+phi = -phi  # Invertir el ángulo de roll para que la rotación sea en la dirección correcta
+trans = Affine2D().rotate_deg(phi) + ax.transData
+im.set_transform(trans)
 
-    plt.tight_layout()
-    plt.show()
+ax.set_title(f"Roll (φ) = {phi}°")
+ax.set_xlim(-2,2)
+ax.set_ylim(-2,2)
+ax.axis("off")
 
-plot_attitude(phi=phi, theta=theta, psi=psi)
+plt.tight_layout()
+plt.show()
