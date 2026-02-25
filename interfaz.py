@@ -55,6 +55,9 @@ def rotation_matrix(phi, theta, psi, v_body):
     phi_rad = np.radians(phi)
     theta_rad = np.radians(theta)
     psi_rad = np.radians(psi)
+
+    # Esta es la matriz transpuesta, ya que pensamos ir del body al NED.
+    
     R_z = np.array([[np.cos(psi_rad), -np.sin(psi_rad), 0],
                     [np.sin(psi_rad), np.cos(psi_rad), 0],
                     [0, 0, 1]])
@@ -97,8 +100,10 @@ def climb_angle(alpha_deg, pitch_deg):
     Relationship: pitch = alpha + gamma  →  gamma = pitch - alpha
     Valid when sideslip is zero (wings-level flight).
     """
-    return pitch_deg - alpha_deg
+    gamma = pitch_deg - alpha_deg
+    return gamma
 
+climb = climb_angle(angle_of_attack(u, w), theta)
 
 #Este coso que dio el profe, todavia no entiendo para que sirve, pero lo dejo por las dudas.
 def aircraft_state(alpha, beta, climb ,u, v, w, p, q, r, phi, theta, psi, v_body, v_NED=v_NED):
