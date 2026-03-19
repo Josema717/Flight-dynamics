@@ -1,52 +1,277 @@
 import sys
 import numpy as np
 import csv
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
-from matplotlib.transforms import Affine2D
-
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QSlider, QLabel, QSplitter, QPushButton, QTabWidget)
-from PyQt6.QtCore import Qt, QTimer
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
+from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF
+from PyQt6.QtGui import QPainter, QPen, QColor, QFont, QImage, QPolygonF
 import calculos
 
-class MplCanvas(FigureCanvas):
-    def __init__(self, parent=None, width=5, height=4, dpi=100, projection=None):
-        self.fig = Figure(figsize=(width, height), dpi=dpi)
-        if projection == '3d':
-            self.ax = self.fig.add_subplot(111, projection='3d')
-        else:
-            self.ax = self.fig.add_subplot(111)
-            self.ax.axis('off')
-        super(MplCanvas, self).__init__(self.fig)
+class TextCanvas(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        self.label = QLabel("")
+        self.label.setFont(QFont("Monospace", 12))
+        self.label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self.label)
+        
+    def set_text(self, text):
+        self.label.setText(text)
 
-class ViewsCanvas(FigureCanvas):
-    def __init__(self, parent=None, width=12, height=4, dpi=100):
-        self.fig = Figure(figsize=(width, height), dpi=dpi)
-        self.axs = self.fig.subplots(1, 3)
-        for ax in self.axs:
-            ax.axis('off')
-        super(ViewsCanvas, self).__init__(self.fig)
+def draw_arrow(painter, x1, y1, x2, y2, color, text='', text_offset=(0,0)):
+    painter.setPen(QPen(QColor(color), 2))
+    painter.setBrush(QColor(color))
+    painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+    
+    if x1 == x2 and y1 == y2: return
+    
+    angle = np.arctan2(y2 - y1, x2 - x1)
+    arrow_len = 10
+    p1 = QPointF(x2 - arrow_len * np.cos(angle - np.pi/6),
+                 y2 - arrow_len * np.sin(angle - np.pi/6))
+    p2 = QPointF(x2 - arrow_len * np.cos(angle + np.pi/6),
+                 y2 - arrow_len * np.sin(angle + np.pi/6))
+    poly = QPolygonF([QPointF(x2, y2), p1, p2])
+    painter.drawPolygon(poly)
+    
+    if text:
+        painter.drawText(int(x2 + text_offset[0]), int(y2 + text_offset[1]), text)
 
-class TriplePlotCanvas(FigureCanvas):
-    def __init__(self, parent=None, width=5, height=6, dpi=100):
-        self.fig = Figure(figsize=(width, height), dpi=dpi)
-        self.axs = self.fig.subplots(3, 1, sharex=True)
-        self.fig.tight_layout(pad=2.0)
-        super(TriplePlotCanvas, self).__init__(self.fig)
+class BaseView(QWidget):
+    def __init__(self, title, img_path):
+        super().__init__()
+        self.title = title
+        self.img = QImage(img_path)
+        self.angle = 0.0
+
+    def set_angle(self, angle):
+        self.angle = angle
+        self.update()
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        w, h = self.width(), self.height()
+        painter.fillRect(0, 0, w, h, QColor(255, 255, 255))
+        painter.drawText(10, 20, f"{self.title} = {self.angle:.1f}°")
+        self.draw_custom(painter, w/2, h/2, w, h)
+
+class YawView(BaseView):
+    def draw_custom(self, painter, cx, cy, w, h):
+        scale = min(w, h) / 4.0
+        painter.translate(cx, cy)
+        draw_arrow(painter, 0, 0, 0, -scale, 'pink', 'N', (-15, -10))
+        draw_arrow(painter, 0, 0, scale, 0, 'purple', 'E', (10, 5))
+        painter.save()
+        painter.rotate(self.angle)
+        img_s = scale * 1.0
+        painter.drawImage(QRectF(-img_s, -img_s, 2*img_s, 2*img_s), self.img)
+        draw_arrow(painter, 0, 0, 0, -scale, 'green', 'x_b', (-15, -10))
+        draw_arrow(painter, 0, 0, scale, 0, 'red', 'y_b', (10, 5))
+        painter.restore()
+
+class PitchView(BaseView):
+    def draw_custom(self, painter, cx, cy, w, h):
+        scale = min(w, h) / 4.0
+        painter.translate(cx, cy)
+        draw_arrow(painter, 0, 0, scale, 0, 'purple', 'X', (10, 5))
+        draw_arrow(painter, 0, 0, 0, scale, 'black', 'Z', (-15, 20))
+        painter.save()
+        painter.rotate(-self.angle)
+        img_s = scale * 1.0
+        painter.drawImage(QRectF(-img_s, -img_s, 2*img_s, 2*img_s), self.img)
+        draw_arrow(painter, 0, 0, scale, 0, 'green', 'x_b', (10, 5))
+        draw_arrow(painter, 0, 0, 0, scale, 'blue', 'z_b', (-15, 20))
+        painter.restore()
+
+class RollView(BaseView):
+    def draw_custom(self, painter, cx, cy, w, h):
+        scale = min(w, h) / 4.0
+        painter.translate(cx, cy)
+        draw_arrow(painter, 0, 0, scale, 0, 'pink', 'Y', (10, 5))
+        draw_arrow(painter, 0, 0, 0, scale, 'black', 'Z', (-15, 20))
+        painter.save()
+        painter.rotate(self.angle)
+        img_s = scale * 1.0
+        painter.drawImage(QRectF(-img_s, -img_s, 2*img_s, 2*img_s), self.img)
+        draw_arrow(painter, 0, 0, -scale, 0, 'red', 'y_b', (-25, 5))
+        draw_arrow(painter, 0, 0, 0, scale, 'blue', 'z_b', (-15, 20))
+        painter.restore()
+
+class ViewsCanvas(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        self.yaw_view = YawView("Yaw (\u03c8)", "top.png")
+        self.pitch_view = PitchView("Pitch (\u03b8)", "side.png")
+        self.roll_view = RollView("Roll (\u03c6)", "front.png")
+        layout.addWidget(self.yaw_view)
+        layout.addWidget(self.pitch_view)
+        layout.addWidget(self.roll_view)
+
+class Plot3DWidget(QWidget):
+    def __init__(self, title="3D"):
+        super().__init__()
+        self.title = title
+        self.lines = []
+        self.texts = []
+        self.scatter = []
+        self.elev = 30
+        self.azim = 45
+        self.axis_length = 10
+
+    def project(self, x, y, z, cx, cy, scale):
+        az = np.deg2rad(self.azim)
+        el = np.deg2rad(self.elev)
+        x_rot = x * np.cos(az) - y * np.sin(az)
+        y_rot = x * np.sin(az) + y * np.cos(az)
+        xp = x_rot
+        yp = y_rot * np.sin(el) - z * np.cos(el)
+        return cx + xp * scale, cy - yp * scale
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        painter.fillRect(0, 0, w, h, QColor(255, 255, 255))
+        painter.drawText(10, 20, self.title)
+        
+        cx, cy = w/2, h/2
+        scale = min(w, h) / (2.5 * max(1, self.axis_length))
+        
+        for pts, color, width in self.lines:
+            painter.setPen(QPen(QColor(color), width))
+            poly = QPolygonF()
+            for pt in pts:
+                px, py = self.project(pt[0], pt[1], pt[2], cx, cy, scale)
+                poly.append(QPointF(px, py))
+            painter.drawPolyline(poly)
+            
+        for x, y, z, text, color in self.texts:
+            painter.setPen(QPen(QColor(color)))
+            px, py = self.project(x, y, z, cx, cy, scale)
+            painter.drawText(QPointF(px, py), text)
+
+        for x, y, z, color in self.scatter:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(color))
+            px, py = self.project(x, y, z, cx, cy, scale)
+            painter.drawEllipse(QPointF(px, py), 4, 4)
+
+class Plot2DWidget(QWidget):
+    def __init__(self, title="", xlabel="", ylabel=""):
+        super().__init__()
+        self.title = title
+        self.xlabel = xlabel
+        self.ylabel = ylabel
+        self.lines = []
+        self.scatter = []
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        painter.fillRect(0, 0, w, h, QColor(255, 255, 255))
+        
+        pad_l, pad_r, pad_t, pad_b = 50, 20, 30, 40
+        plot_w = w - pad_l - pad_r
+        plot_h = h - pad_t - pad_b
+        
+        if plot_w <= 0 or plot_h <= 0: return
+
+        x_min, x_max, y_min, y_max = float('inf'), float('-inf'), float('inf'), float('-inf')
+        for x_data, y_data, _ in self.lines:
+            if len(x_data) > 0:
+                x_min = min(x_min, np.min(x_data))
+                x_max = max(x_max, np.max(x_data))
+                y_min = min(y_min, np.min(y_data))
+                y_max = max(y_max, np.max(y_data))
+                
+        for x, y, _ in self.scatter:
+            x_min, x_max = min(x_min, x), max(x_max, x)
+            y_min, y_max = min(y_min, y), max(y_max, y)
+            
+        if x_max == float('inf'):
+            x_min, x_max, y_min, y_max = 0, 1, 0, 1
+            
+        if x_max == x_min: x_max, x_min = x_min + 1, x_min - 1
+        if y_max == y_min: y_max, y_min = y_min + 1, y_min - 1
+        
+        dy = (y_max - y_min) * 0.1
+        y_min -= dy
+        y_max += dy
+        
+        def to_px(x, y):
+            px = pad_l + (x - x_min) / (x_max - x_min) * plot_w
+            py = h - pad_b - (y - y_min) / (y_max - y_min) * plot_h
+            return QPointF(px, py)
+
+        painter.setPen(QPen(QColor(200, 200, 200), 1))
+        for i in range(5):
+            y_val = y_min + i * (y_max - y_min) / 4
+            p1 = to_px(x_min, y_val)
+            p2 = to_px(x_max, y_val)
+            painter.drawLine(p1, QPointF(p2.x(), p1.y()))
+            painter.setPen(QPen(QColor('black')))
+            painter.drawText(QRectF(0, p1.y() - 10, pad_l - 5, 20), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{y_val:.1f}")
+            painter.setPen(QPen(QColor(200, 200, 200), 1))
+
+        for x_data, y_data, color in self.lines:
+            if len(x_data) == 0: continue
+            painter.setPen(QPen(QColor(color), 2))
+            poly = QPolygonF()
+            for x, y in zip(x_data, y_data):
+                poly.append(to_px(x, y))
+            painter.drawPolyline(poly)
+            
+        for x, y, color in self.scatter:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(color))
+            pt = to_px(x, y)
+            painter.drawEllipse(pt, 4, 4)
+            
+        painter.setPen(QPen(QColor('black')))
+        painter.drawText(QRectF(pad_l, 0, plot_w, pad_t), Qt.AlignmentFlag.AlignCenter, self.title)
+        
+        painter.save()
+        painter.translate(15, pad_t + plot_h/2)
+        painter.rotate(-90)
+        painter.drawText(QRectF(-plot_h/2, -15, plot_h, 30), Qt.AlignmentFlag.AlignCenter, self.ylabel)
+        painter.restore()
+
+        painter.drawText(QRectF(pad_l, h - 25, plot_w, 25), Qt.AlignmentFlag.AlignCenter, self.xlabel)
+
+class TriplePlotCanvas(QWidget):
+    def __init__(self, title1, title2, title3, xlabel, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0,0,0,0)
+        self.p1 = Plot2DWidget(ylabel=title1)
+        self.p2 = Plot2DWidget(ylabel=title2)
+        self.p3 = Plot2DWidget(ylabel=title3, xlabel=xlabel)
+        layout.addWidget(self.p1)
+        layout.addWidget(self.p2)
+        layout.addWidget(self.p3)
+
+    def set_data(self, t, list1, idx, color1='red', color2='green', color3='blue'):
+        self.p1.lines = [(t[:idx+1], list1[0][:idx+1], color1)]
+        self.p2.lines = [(t[:idx+1], list1[1][:idx+1], color2)]
+        self.p3.lines = [(t[:idx+1], list1[2][:idx+1], color3)]
+        if idx > 0:
+            self.p1.scatter = [(t[idx], list1[0][idx], color1)]
+            self.p2.scatter = [(t[idx], list1[1][idx], color2)]
+            self.p3.scatter = [(t[idx], list1[2][idx], color3)]
+        self.p1.update()
+        self.p2.update()
+        self.p3.update()
 
 class HUDInterface(QMainWindow):
     def __init__(self, csv_file):
         super().__init__()
         self.setWindowTitle("HUD Viewer")
         self.resize(1200, 800)
-
-        # Load images
-        self.img_top = mpimg.imread("top.png")
-        self.img_side = mpimg.imread("side.png")
-        self.img_front = mpimg.imread("front.png")
 
         # Load Data
         with open(csv_file, 'r', newline='', encoding='utf-8') as f:
@@ -116,31 +341,31 @@ class HUDInterface(QMainWindow):
         top_widget = QWidget()
         top_layout = QHBoxLayout(top_widget)
         
-        self.views_canvas = ViewsCanvas(self, width=9, height=3)
+        self.views_canvas = ViewsCanvas(self)
         top_layout.addWidget(self.views_canvas)
         
         bottom_widget = QWidget()
         bottom_layout = QHBoxLayout(bottom_widget)
         
-        self.text_canvas = MplCanvas(self, width=3, height=4)
-        bottom_layout.addWidget(self.text_canvas)
+        self.text_canvas = TextCanvas(self)
+        bottom_layout.addWidget(self.text_canvas, stretch=1)
         
         self.plot_tabs = QTabWidget()
-        bottom_layout.addWidget(self.plot_tabs)
+        bottom_layout.addWidget(self.plot_tabs, stretch=3)
 
-        self.ned_canvas = MplCanvas(self, width=4, height=4, projection='3d')
+        self.ned_canvas = Plot3DWidget()
         self.plot_tabs.addTab(self.ned_canvas, "NED Frame")
         
-        self.traj3d_canvas = MplCanvas(self, width=4, height=4, projection='3d')
+        self.traj3d_canvas = Plot3DWidget(title="3D Trajectory")
         self.plot_tabs.addTab(self.traj3d_canvas, "3D Trajectory")
         
-        self.traj2d_canvas = MplCanvas(self, width=4, height=4)
+        self.traj2d_canvas = Plot2DWidget(title="2D Trajectory (East vs North)", xlabel="East", ylabel="North")
         self.plot_tabs.addTab(self.traj2d_canvas, "2D Trajectory")
         
-        self.euler_canvas = TriplePlotCanvas(self, width=4, height=4)
+        self.euler_canvas = TriplePlotCanvas("Roll (°)", "Pitch (°)", "Yaw (°)", "Time (s)", self)
         self.plot_tabs.addTab(self.euler_canvas, "Euler Angles")
         
-        self.rates_canvas = TriplePlotCanvas(self, width=4, height=4)
+        self.rates_canvas = TriplePlotCanvas("p (rad/s)", "q (rad/s)", "r (rad/s)", "Time (s)", self)
         self.plot_tabs.addTab(self.rates_canvas, "Angular Rates")
 
         splitter.addWidget(top_widget)
@@ -164,19 +389,11 @@ class HUDInterface(QMainWindow):
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
-        self.dt_ms = 33 # roughly 30 FPS target visual update for smoother GUI event loop
+        self.dt_ms = 33
 
         self.current_idx = 0
         self.is_playing = False
-
-        # Init references for views
-        self.vp_yaw = self.views_canvas.axs[0]
-        self.vp_pitch = self.views_canvas.axs[1]
-        self.vp_roll = self.views_canvas.axs[2]
         
-        self.text_display = self.text_canvas.ax.text(0.05, 0.95, "", fontsize=12, va='top', family='monospace')
-        
-        # Precompute trajectories to save rendering time
         self.Pn = np.array([p[0] for p in self.P_ned_list])
         self.Pe = np.array([p[1] for p in self.P_ned_list])
         self.Pd = np.array([p[2] for p in self.P_ned_list])
@@ -201,8 +418,6 @@ class HUDInterface(QMainWindow):
 
     def update_frame(self):
         if self.current_idx < self.n_points - 1:
-            # Advance frames by a proportional amount based on dt_ms so it plays in real time if possible
-            # tello dt is around 0.002s, so for 20ms we advance about 10 steps
             step_size = max(1, int(self.dt_ms / 1000.0 / (self.time_list[min(self.current_idx+1, self.n_points-1)] - self.time_list[self.current_idx] + 1e-6)))
             self.current_idx += step_size
             self.current_idx = min(self.current_idx, self.n_points - 1)
@@ -223,12 +438,10 @@ class HUDInterface(QMainWindow):
         
         self.info_label.setText(f"Time: {self.time_list[idx]:.2f}s")
         
-        # Calculate derived metrics using calculos
         alpha = calculos.angle_of_attack(u, w)
         beta = calculos.sideslip_angle(u, v, w)
         climb = calculos.climb_angle(alpha, theta)
         
-        # Text update
         text = (
             f"Velocity on the body:\n"
             f"u = {u:.2f} m/s\n"
@@ -243,169 +456,78 @@ class HUDInterface(QMainWindow):
             f"theta = {theta:.2f}°\n"
             f"psi   = {psi:.2f}°"
         )
-        self.text_display.set_text(text)
-        self.text_canvas.draw_idle()
+        self.text_canvas.set_text(text)
 
-        # Update Views
-        self.vp_yaw.clear()
-        self.vp_pitch.clear()
-        self.vp_roll.clear()
-        
-        self.vp_yaw.axis("off"); self.vp_yaw.set_xlim(-2,2); self.vp_yaw.set_ylim(-2,2); self.vp_yaw.set_title(f"Yaw (\u03c8) = {psi:.1f}°")
-        self.vp_pitch.axis("off"); self.vp_pitch.set_xlim(-2,2); self.vp_pitch.set_ylim(-2,2); self.vp_pitch.set_title(f"Pitch (\u03b8) = {theta:.1f}°")
-        self.vp_roll.axis("off"); self.vp_roll.set_xlim(-2,2); self.vp_roll.set_ylim(-2,2); self.vp_roll.set_title(f"Roll (\u03c6) = {phi:.1f}°")
+        self.views_canvas.yaw_view.set_angle(psi)
+        self.views_canvas.pitch_view.set_angle(theta)
+        self.views_canvas.roll_view.set_angle(phi)
 
-        # Yaw
-        self.vp_yaw.arrow(0, 0, 0, 1, head_width=0.1, head_length=0.1, fc='pink', ec='pink', linewidth=2, zorder=1)
-        self.vp_yaw.arrow(0, 0, 1, 0, head_width=0.1, head_length=0.1, fc='purple', ec='purple', linewidth=2, zorder=1)
-        self.vp_yaw.text(1.1, 0, 'E', fontsize=10, color='purple', fontweight='bold')
-        self.vp_yaw.text(0, 1.1, 'N', fontsize=10, color='pink', fontweight='bold')
-        im1 = self.vp_yaw.imshow(self.img_top, extent=[-1,1,-1,1], zorder=2)
-        trans1 = Affine2D().rotate_deg(-psi) + self.vp_yaw.transData
-        im1.set_transform(trans1)
-        self.vp_yaw.arrow(0, 0, 1, 0, fc='red', ec='red', transform=trans1, zorder=3)
-        self.vp_yaw.arrow(0, 0, 0, 1, fc='green', ec='green', transform=trans1, zorder=3)
-        self.vp_yaw.text(1.1, 0, 'y_b', color='red', transform=trans1)
-        self.vp_yaw.text(0, 1.1, 'x_b', color='green', transform=trans1)
-
-        # Pitch
-        self.vp_pitch.arrow(0, 0, 1, 0, head_width=0.1, head_length=0.1, fc='purple', ec='purple', linewidth=2, zorder=1)
-        self.vp_pitch.arrow(0, 0, 0, -1, head_width=0.1, head_length=0.1, fc='black', ec='black', linewidth=2, zorder=1)
-        self.vp_pitch.text(1.1, 0, 'X', fontsize=10, color='purple', fontweight='bold')
-        self.vp_pitch.text(0, -1.1, 'Z', fontsize=10, color='black', fontweight='bold')
-        im2 = self.vp_pitch.imshow(self.img_side, extent=[-1,1,-1,1], zorder=2)
-        trans2 = Affine2D().rotate_deg(theta) + self.vp_pitch.transData
-        im2.set_transform(trans2)
-        self.vp_pitch.arrow(0, 0, 1, 0, fc='red', transform=trans2)
-        self.vp_pitch.arrow(0, 0, 0, -1, fc='blue', transform=trans2)
-        self.vp_pitch.text(1.1, 0, 'x_b', color='red', transform=trans2)
-        self.vp_pitch.text(0, -1.1, 'z_b', color='blue', transform=trans2)
-
-        # Roll
-        # Fix Y dimension to point in opposite direction (now points right, positive to East)
-        self.vp_roll.arrow(0, 0, 1, 0, head_width=0.1, head_length=0.1, fc='pink', ec='pink', linewidth=2, zorder=1)
-        self.vp_roll.arrow(0, 0, 0, -1, head_width=0.1, head_length=0.1, fc='black', ec='black', linewidth=2, zorder=1)
-        self.vp_roll.text(1.1, 0, 'Y', fontsize=10, color='pink', fontweight='bold')
-        self.vp_roll.text(0, -1.1, 'Z', fontsize=10, color='black', fontweight='bold')
-        im3 = self.vp_roll.imshow(self.img_front, extent=[-1,1,-1,1], zorder=2)
-        trans3 = Affine2D().rotate_deg(-phi) + self.vp_roll.transData
-        im3.set_transform(trans3)
-        self.vp_roll.arrow(0, 0, -1, 0, fc='green', transform=trans3)
-        self.vp_roll.arrow(0, 0, 0, -1, fc='blue', transform=trans3)
-        self.vp_roll.text(-1.1, 0, 'y_b', color='green', transform=trans3)
-        self.vp_roll.text(0, -1.1, 'z_b', color='blue', transform=trans3)
-        
-        self.views_canvas.draw_idle()
-
-        # Update 3D NED
-        ax3d = self.ned_canvas.ax
-        ax3d.cla()
         axis_length = max(10, np.linalg.norm(v_NED) * 1.5)
         
-        # Base axes mapping to ENU plot format to preserve standard 3D chirality: X=East, Y=North, Z=-Down(Altitude)
-        ax3d.quiver(0, 0, 0, 0, axis_length, 0, color='b', arrow_length_ratio=0.1)
-        ax3d.text(0, axis_length, 0, 'N', color='b')
-        ax3d.quiver(0, 0, 0, axis_length, 0, 0, color='b', arrow_length_ratio=0.1)
-        ax3d.text(axis_length, 0, 0, 'E', color='b')
-        ax3d.quiver(0, 0, 0, 0, 0, -axis_length, color='b', arrow_length_ratio=0.1)
-        ax3d.text(0, 0, -axis_length, 'D', color='b')
+        lines3d = [
+            ([(0,0,0), (0,axis_length,0)], 'b', 1),
+            ([(0,0,0), (axis_length,0,0)], 'b', 1),
+            ([(0,0,0), (0,0,-axis_length)], 'b', 1),
+        ]
+        texts3d = [
+            (0, axis_length+1, 0, 'N', 'b'),
+            (axis_length+1, 0, 0, 'E', 'b'),
+            (0, 0, -axis_length-1, 'D', 'b')
+        ]
         
         if np.linalg.norm(v_NED) > 0.1:
-            ax3d.quiver(0, 0, 0, v_NED[1], v_NED[0], -v_NED[2], color='r')
-            ax3d.text(v_NED[1], v_NED[0], -v_NED[2], 'V', color='k')
+            lines3d.append(([(0,0,0), (v_NED[1], v_NED[0], -v_NED[2])], 'r', 2))
+            texts3d.append((v_NED[1]+1, v_NED[0]+1, -v_NED[2]-1, 'V', 'k'))
             
         R_body_to_NED, _, _, _, _ = calculos.rotation_matrix(phi, theta, psi, v_body)
         
-        # Aircraft wireframe
         scale = axis_length * 0.4
         pts_body = np.array([
-            [ 1.0,  0.0,  0.0],  # 0 Nose
-            [-1.0,  0.0,  0.0],  # 1 Tail
-            [-0.2,  1.0,  0.0],  # 2 Right wing
-            [-0.2, -1.0,  0.0],  # 3 Left wing
-            [-1.0,  0.0, -0.4],  # 4 Tail fin tip
-            [-1.0,  0.0,  0.0],  # 5 Tail base
+            [ 1.0,  0.0,  0.0],
+            [-1.0,  0.0,  0.0],
+            [-0.2,  1.0,  0.0],
+            [-0.2, -1.0,  0.0],
+            [-1.0,  0.0, -0.4],
+            [-1.0,  0.0,  0.0],
         ]).T
         
         pts_ned = R_body_to_NED @ pts_body * scale
         
-        # Plotting mapped into ENU layout
-        ax3d.plot(pts_ned[1,[0,1]], pts_ned[0,[0,1]], -pts_ned[2,[0,1]], color='orange', linewidth=4)
-        ax3d.plot(pts_ned[1,[2,3]], pts_ned[0,[2,3]], -pts_ned[2,[2,3]], color='orange', linewidth=4)
-        ax3d.plot(pts_ned[1,[4,5]], pts_ned[0,[4,5]], -pts_ned[2,[4,5]], color='orange', linewidth=4)
+        def map_ned(pts_ned, indices):
+            return [(pts_ned[1,i], pts_ned[0,i], -pts_ned[2,i]) for i in indices]
+
+        lines3d.append((map_ned(pts_ned, [0,1]), 'orange', 4))
+        lines3d.append((map_ned(pts_ned, [2,3]), 'orange', 4))
+        lines3d.append((map_ned(pts_ned, [4,5]), 'orange', 4))
         
-        ax3d.set_xlim([-axis_length, axis_length])
-        ax3d.set_ylim([-axis_length, axis_length])
-        ax3d.set_zlim([-axis_length, axis_length])
-        ax3d.set_xlabel('East')
-        ax3d.set_ylabel('North')
-        ax3d.set_zlabel('-Down (Altitude)')
-        ax3d.set_title("NED Attitude Tracker")
+        self.ned_canvas.axis_length = axis_length
+        self.ned_canvas.lines = lines3d
+        self.ned_canvas.texts = texts3d
+        self.ned_canvas.update()
+
+        path3d_x = self.Pe[:idx+1]
+        path3d_y = self.Pn[:idx+1]
+        path3d_z = -self.Pd[:idx+1]
         
-        self.ned_canvas.draw_idle()
-
-        # Update 3D Trajectory
-        axt3 = self.traj3d_canvas.ax
-        axt3.cla()
-        axt3.plot(self.Pn[:idx+1], self.Pe[:idx+1], -self.Pd[:idx+1], color='blue', label='Path')
+        path3d_line = list(zip(path3d_x, path3d_y, path3d_z))
+        
+        self.traj3d_canvas.axis_length = max(10, np.max(np.abs(path3d_x)), np.max(np.abs(path3d_y)), np.max(np.abs(path3d_z)))
+        self.traj3d_canvas.lines = [(path3d_line, 'blue', 2)]
         if idx > 0:
-            axt3.scatter(self.Pn[idx], self.Pe[idx], -self.Pd[idx], color='red', label='Current Pos')
-        axt3.set_title("3D Trajectory")
-        axt3.set_xlabel("North")
-        axt3.set_ylabel("East")
-        axt3.set_zlabel("Altitude (-D)")
-        axt3.legend(loc='best')
-        self.traj3d_canvas.draw_idle()
+            self.traj3d_canvas.scatter = [(path3d_x[-1], path3d_y[-1], path3d_z[-1], 'red')]
+        else:
+            self.traj3d_canvas.scatter = []
+        self.traj3d_canvas.update()
 
-        # Update 2D Trajectory
-        axt2 = self.traj2d_canvas.ax
-        axt2.cla()
-        axt2.plot(self.Pe[:idx+1], self.Pn[:idx+1], color='green', label='Path')
+        self.traj2d_canvas.lines = [(self.Pe[:idx+1], self.Pn[:idx+1], 'green')]
         if idx > 0:
-            axt2.scatter(self.Pe[idx], self.Pn[idx], color='red', label='Current Pos')
-        axt2.set_title("2D Trajectory (East vs North)")
-        axt2.set_xlabel("East")
-        axt2.set_ylabel("North")
-        axt2.legend(loc='best')
-        axt2.grid(True)
-        self.traj2d_canvas.draw_idle()
-
-        # Update Euler Angles
-        ax_phi, ax_theta, ax_psi = self.euler_canvas.axs
-        ax_phi.cla(); ax_theta.cla(); ax_psi.cla()
-        t = self.time_list[:idx+1]
-        ax_phi.plot(t, self.phi_list[:idx+1], 'r')
-        ax_theta.plot(t, self.theta_list[:idx+1], 'g')
-        ax_psi.plot(t, self.psi_list[:idx+1], 'b')
-        if idx > 0:
-            ax_phi.plot(t[-1], self.phi_list[idx], 'ro')
-            ax_theta.plot(t[-1], self.theta_list[idx], 'go')
-            ax_psi.plot(t[-1], self.psi_list[idx], 'bo')
-            
-        ax_phi.set_ylabel("Roll (°)")
-        ax_theta.set_ylabel("Pitch (°)")
-        ax_psi.set_ylabel("Yaw (°)")
-        ax_psi.set_xlabel("Time (s)")
-        ax_phi.grid(True); ax_theta.grid(True); ax_psi.grid(True)
-        self.euler_canvas.draw_idle()
-
-        # Update Angular Rates
-        ax_p, ax_q, ax_r = self.rates_canvas.axs
-        ax_p.cla(); ax_q.cla(); ax_r.cla()
-        ax_p.plot(t, self.p_list[:idx+1], 'r')
-        ax_q.plot(t, self.q_list[:idx+1], 'g')
-        ax_r.plot(t, self.r_list[:idx+1], 'b')
-        if idx > 0:
-            ax_p.plot(t[-1], self.p_list[idx], 'ro')
-            ax_q.plot(t[-1], self.q_list[idx], 'go')
-            ax_r.plot(t[-1], self.r_list[idx], 'bo')
-            
-        ax_p.set_ylabel("p (rad/s)")
-        ax_q.set_ylabel("q (rad/s)")
-        ax_r.set_ylabel("r (rad/s)")
-        ax_r.set_xlabel("Time (s)")
-        ax_p.grid(True); ax_q.grid(True); ax_r.grid(True)
-        self.rates_canvas.draw_idle()
+            self.traj2d_canvas.scatter = [(self.Pe[idx], self.Pn[idx], 'red')]
+        else:
+            self.traj2d_canvas.scatter = []
+        self.traj2d_canvas.update()
+# Aqui se cambian los colores de las graficas
+        self.euler_canvas.set_data(self.time_list, [self.phi_list, self.theta_list, self.psi_list], idx, 'magenta', 'cyan', 'orange')
+        self.rates_canvas.set_data(self.time_list, [self.p_list, self.q_list, self.r_list], idx, 'red', 'green', 'blue')
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

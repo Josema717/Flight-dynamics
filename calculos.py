@@ -123,24 +123,28 @@ def integrate_imu_data(imu):
         omega_body = np.array([p, q, r]) # Velocidad angular en el sistema de referencia del body
 
         # Crear el vector de velocidades en el body
-        u_dot = float(row["accel_x_m_s2"]) + 0
-        v_dot = float(row["accel_y_m_s2"]) + 0
-        w_dot = float(row["accel_z_m_s2"]) + 9.81
-                
+        u_dot = float(row["accel_x_m_s2"])
+        v_dot = float(row["accel_y_m_s2"])
+        w_dot = float(row["accel_z_m_s2"])
+        a_body = np.array([u_dot, v_dot, w_dot]) # Aceleración en el sistema de referencia del body
+        a_ned = R_body_to_NED @ a_body # Transformar la aceleración del body al NED
+        for j in range(1, len(imu)):
+            a_ned[j][2] -= 9.81 # Restar la gravedad a la componente vertical de la aceleración en el NED
         #Integral para las velocidades
+        u= a_ned[0]
+        v= a_ned[1]
+        w= a_ned[2]
+
         u += u_dot * dt
         v += v_dot * dt
         w += w_dot * dt
-
-        v_body = np.array([u, v, w]) # Actualizar el vector de velocidades en el body
-        v_NED = R_body_to_NED @ v_body # Transformar las velocidades del body al NED
-
+        v_NED = np.array([u, v, w]) # Velocidad actual en el NED
         #Integral para la posicion en el NED
-        P_n, P_e, P_d = 0, 0, 0 # Posición inicial en el NED
-        P_ned = np.array([P_n, P_e, P_d]) # Posición actual en el NED
+        Pn, Pe, Pd = 0, 0, 0 # Posición inicial en el NED
+        P_ned = np.array([Pn, Pe, Pd]) # Posición actual en el NED
         P_ned[0] += v_NED[0] * dt
         P_ned[1] += v_NED[1] * dt
-        P_ned[2] += v_NED[2] * dt
+        P_ned[2] += v_NED[2] * dt *-1 # El eje Z del NED apunta hacia abajo, por eso se multiplica por -1
 
         #Integral para los ángulos de Euler
         euler_rates = angular_rates_to_euler(p, q, r, phi, theta)
@@ -155,3 +159,21 @@ def integrate_imu_data(imu):
         phi_list.append(phi); theta_list.append(theta); psi_list.append(psi)
 
     return time_list, v_NED, P_ned, phi, theta, psi
+
+def angle_2_quaternion(R_ned_to_body):
+    qs = np.sqrt(0.25 * (R_ned_to_body[0,0] + R_ned_to_body[1,1] + R_ned_to_body[2,2] + 1))
+    qx = np.sqrt(0.25 * (R_ned_to_body[0,0] - R_ned_to_body[1,1] - R_ned_to_body[2,2] + 1))
+    qy = np.sqrt(0.25 * (-R_ned_to_body[0,0] + R_ned_to_body[1,1] - R_ned_to_body[2,2] + 1))
+    qz = np.sqrt(0.25 * (-R_ned_to_body[0,0] - R_ned_to_body[1,1] + R_ned_to_body[2,2] + 1))
+    q = np.array([qs, qx, qy, qz])
+    return q
+    
+def quaternion_2_angle(q):
+    theta = 2 * np.arccos(q[0])
+    e = []
+    if abs(theta) < 1e-3:
+        return 0.0, np.array([0, 0, 0])
+    e[0] = q[1] / np.sin(theta/2)
+    e[1] = q[2] / np.sin(theta/2)
+    e[2] = q[3] / np.sin(theta/2)
+    return np.rad2deg(theta), e
