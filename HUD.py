@@ -3,10 +3,7 @@ import pprint
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.transforms import Affine2D
-#Convencion de NED: X norte, Y este, Z abajo
-
-#Inicializar variables
-alpha, beta, climb, u, v, w, p, q, r, phi, theta, psi = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+import calculos as calculos
 
 # Voy a hacer un menu sencillo para que el usuario pueda elegir cual de los tres escenarios de vuelo quiere ver o si quiere uno personalizado
 
@@ -47,83 +44,6 @@ elif respuesta == "4":
     print(f"Para el caso personalizado, vamos a trabajar con estos angulos {{phi, theta, psi}} = {{{phi}, {theta}, {psi}}} grados y con velocidades en el cuerpo de {{u, v, w}} = {{{u}, {v}, {w}}} m/s    ")
 
 
-v_body = np.array([u, v, w])
-
-# La matriz de rotacion para cambiar del body al NED
-
-def rotation_matrix(phi, theta, psi, v_body):
-    phi_rad = np.radians(phi)
-    theta_rad = np.radians(theta)
-    psi_rad = np.radians(psi)
-
-    # Esta es la matriz transpuesta, ya que pensamos ir del body al NED.
-    
-    R_z = np.array([[np.cos(psi_rad), np.sin(psi_rad), 0],
-                    [-np.sin(psi_rad), np.cos(psi_rad), 0],
-                    [0, 0, 1]])
-    R_y = np.array([[np.cos(theta_rad), 0, -np.sin(theta_rad)],
-                    [0, 1, 0],
-                    [np.sin(theta_rad), 0, np.cos(theta_rad)]])
-    R_x = np.array([[1, 0, 0],
-                    [0, np.cos(phi_rad), np.sin(phi_rad)],
-                    [0, -np.sin(phi_rad), np.cos(phi_rad)]])
-    R_zyx = R_z @ R_y @ R_x # Del NED al body
-    R_body_to_NED = R_zyx.T # Transpuesta para ir del body al NED
-    v_NED = R_body_to_NED @ v_body
-    return R_body_to_NED, v_NED, phi, theta, psi
-
-R_body_to_NED, v_NED, phi, theta, psi = rotation_matrix(phi, theta, psi, v_body)
-
-# AERODYNAMIC ANGLES
-
-def angle_of_attack(u, w):
-    """
-    Alpha (α) — Angle of Attack [deg]
-    Angle between the velocity vector projected on the XZ body plane and
-    the body X-axis. Defined as atan2(w, u).
-    """
-    alpha = np.rad2deg(np.arctan2(w, u))
-    return alpha
-
-alpha = angle_of_attack(u, w)
-
-def sideslip_angle(u, v, w):
-    """
-    Beta (β) — Sideslip Angle [deg]
-    Angle between the total velocity vector and the body XZ plane.
-    Defined as atan2(v, sqrt(u²+w²)) or equivalently asin(v/V).
-    """
-    V = np.sqrt(u**2 + v**2 + w**2)
-    return np.rad2deg(np.arcsin(v/V))
-
-
-def climb_angle(alpha_deg, pitch_deg):
-    """
-    Gamma (γ) — Climb Angle [deg]
-    Relationship: pitch = alpha + gamma  →  gamma = pitch - alpha
-    Valid when sideslip is zero (wings-level flight).
-    """
-    return pitch_deg - alpha_deg
-
-
-#Este coso que dio el profe, todavia no entiendo para que sirve, pero lo dejo por las dudas.
-def aircraft_state(alpha, beta, climb ,u, v, w, p, q, r, phi, theta, psi, v_body, v_NED=v_NED):
-    "Returns aircraft state values in a structured format"
-    state_values = {
-        "angles": {
-            "alpha": float(alpha), #Angle of attack [deg]
-            "beta": float(beta),   #Sideslip angle [deg]
-            "gamma": float(climb), #Climb angle [deg]
-        },
-        "velocities_body": np.array([u, v, w]), #Velocities in body frame [m/s]
-        "velocities_ned": v_NED,  #Velocities in NED frame [m/s]
-        "angular_rates": np.array([p, q, r]),   #Angular rates in body frame [rad/s]
-        "attitude": np.array([phi, theta, psi]), #Euler angles: roll, pitch, yaw [deg]
-    }
-    return state_values
-
-estado = aircraft_state(alpha=angle_of_attack(u,w), beta=sideslip_angle(u,v,w), climb=climb_angle(angle_of_attack(u,w),theta), u=u, v=v, w=w, p=p, q=q, r=r, phi=phi, theta=theta, psi=psi, v_body=v_body)
-pprint.pprint(estado)
 
 # Interfaz grafica 
 
@@ -132,6 +52,10 @@ pprint.pprint(estado)
 phi = phi     # roll
 theta = theta   # pitch
 psi = psi     # yaw
+
+#Importar el resultado de la funcion de rotacion para optener la velocidad en el NED y la matriz de rotacion del cuerpo al NED
+v_body = np.array([u, v, w])
+R_body_to_NED, v_NED, phi, theta, psi = calculos.rotation_matrix(phi, theta, psi, v_body)
 
 # Cargar las imagenes de los aviones en las tres vistas
 
@@ -224,13 +148,14 @@ ax.set_xlim(-2,2)
 ax.set_ylim(-2,2)
 ax.axis("off")
 
+# Definir el state del body con las variables de estado
 state = {
     "u": u,
     "v": v,
     "w": w,
-    "alpha": alpha,
-    "beta": beta,
-    "climb": climb_angle(angle_of_attack(u,w),theta),
+    "alpha": calculos.angle_of_attack(u,w),
+    "beta": calculos.sideslip_angle(u,v,w),
+    "climb": calculos.climb_angle(calculos.angle_of_attack(u,w),theta),
     "phi": phi,
     "theta": theta,
     "psi": psi
@@ -246,7 +171,7 @@ text = (
     f"w = {state['w']} ft/s\n\n"
     f"Angles:\n"
     f"alpha = {state['alpha']}°\n"
-    f"beta  = {state['beta']}°\n\n"
+    f"beta  = {state['beta']}°\n"
     f"climb = {state['climb']}°\n\n"
     f"Euler:\n"
     f"phi = {state['phi']}°\n"
@@ -255,13 +180,6 @@ text = (
 )
 
 ax.text(0.05, 0.95, text, fontsize=12, va='top', family='monospace')
-
-fig, ax = plt.subplots()
-ax.axis('off')  # quitar ejes
-
-
-ax.text(0.1, 0.5, text, fontsize=12)
-
 
 # Eje de referencia NED en 3d
 fig = plt.figure()
