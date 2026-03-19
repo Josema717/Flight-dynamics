@@ -40,6 +40,8 @@ def angle_of_attack(u, w):
     Angle between the velocity vector projected on the XZ body plane and
     the body X-axis. Defined as atan2(w, u).
     """
+    if abs(u) < 1e-3 and abs(w) < 1e-3:
+        return 0.0
     alpha = np.rad2deg(np.arctan2(w, u))
     return alpha
 
@@ -52,6 +54,8 @@ def sideslip_angle(u, v, w):
     Defined as atan2(v, sqrt(u²+w²)) or equivalently asin(v/V).
     """
     V = np.sqrt(u**2 + v**2 + w**2)
+    if V < 1e-3:
+        return 0.0
     return np.rad2deg(np.arcsin(v/V))
 
 
