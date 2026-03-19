@@ -96,7 +96,7 @@ class RollView(BaseView):
         painter.rotate(self.angle)
         img_s = scale * 1.0
         painter.drawImage(QRectF(-img_s, -img_s, 2*img_s, 2*img_s), self.img)
-        draw_arrow(painter, 0, 0, -scale, 0, 'red', 'y_b', (-25, 5))
+        draw_arrow(painter, 0, 0, scale, 0, 'red', 'y_b', (10, 5))
         draw_arrow(painter, 0, 0, 0, scale, 'blue', 'z_b', (-15, 20))
         painter.restore()
 
@@ -125,11 +125,11 @@ class Plot3DWidget(QWidget):
     def project(self, x, y, z, cx, cy, scale):
         az = np.deg2rad(self.azim)
         el = np.deg2rad(self.elev)
-        x_rot = x * np.cos(az) - y * np.sin(az)
-        y_rot = x * np.sin(az) + y * np.cos(az)
-        xp = x_rot
-        yp = y_rot * np.sin(el) - z * np.cos(el)
-        return cx + xp * scale, cy - yp * scale
+        x_rot = x * np.cos(az) + y * np.sin(az)
+        y_rot = -x * np.sin(az) + y * np.cos(az)
+        xp = y_rot
+        yp = -x_rot * np.sin(el) + z * np.cos(el)
+        return cx + xp * scale, cy + yp * scale
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -308,7 +308,7 @@ class HUDInterface(QMainWindow):
             v_body = np.array([u, v, w])
             # Getting v_NED and R_body_to_NED at current step
             R_body_to_NED, v_NED, _, _, _ = calculos.rotation_matrix(phi, theta, psi, v_body)
-            P_ned = P_ned + v_NED * dt
+            P_ned = P_ned + np.array([v_NED[0], v_NED[1], -v_NED[2]]) * dt
             
             euler_rates = calculos.angular_rates_to_euler(p, q, r, phi, theta)
             phi += np.rad2deg(euler_rates[0] * dt)
@@ -418,7 +418,13 @@ class HUDInterface(QMainWindow):
 
     def update_frame(self):
         if self.current_idx < self.n_points - 1:
-            step_size = max(1, int(self.dt_ms / 1000.0 / (self.time_list[min(self.current_idx+1, self.n_points-1)] - self.time_list[self.current_idx] + 1e-6)))
+            step_diff = self.time_list[min(self.current_idx+1, self.n_points-1)] - self.time_list[self.current_idx]
+            if step_diff <= 0:
+                step_size = 1
+            else:
+                step_size = max(1, int(self.dt_ms / 1000.0 / step_diff))
+                step_size = min(step_size, 5)
+
             self.current_idx += step_size
             self.current_idx = min(self.current_idx, self.n_points - 1)
             self.slider.blockSignals(True)
@@ -442,7 +448,16 @@ class HUDInterface(QMainWindow):
         beta = calculos.sideslip_angle(u, v, w)
         climb = calculos.climb_angle(alpha, theta)
         
+        Pn = self.P_ned_list[idx][0]
+        Pe = self.P_ned_list[idx][1]
+        # P_ned[2] was integrated with -v_NED[2]*dt so it's already altitude (positive = up)
+        altitude = self.P_ned_list[idx][2]
+
         text = (
+            f"Position (NED):\n"
+            f"Pn = {Pn:.1f} m\n"
+            f"Pe = {Pe:.1f} m\n"
+            f"Alt = {altitude:.1f} m\n\n"
             f"Velocity on the body:\n"
             f"u = {u:.2f} m/s\n"
             f"v = {v:.2f} m/s\n"
@@ -465,36 +480,40 @@ class HUDInterface(QMainWindow):
         axis_length = max(10, np.linalg.norm(v_NED) * 1.5)
         
         lines3d = [
-            ([(0,0,0), (0,axis_length,0)], 'b', 1),
             ([(0,0,0), (axis_length,0,0)], 'b', 1),
-            ([(0,0,0), (0,0,-axis_length)], 'b', 1),
+            ([(0,0,0), (0,axis_length,0)], 'b', 1),
+            ([(0,0,0), (0,0,axis_length)], 'b', 1),
         ]
         texts3d = [
-            (0, axis_length+1, 0, 'N', 'b'),
-            (axis_length+1, 0, 0, 'E', 'b'),
-            (0, 0, -axis_length-1, 'D', 'b')
+            (axis_length+1, 0, 0, 'N', 'b'),
+            (0, axis_length+1, 0, 'E', 'b'),
+            (0, 0, axis_length+1, 'D', 'b')
         ]
         
         if np.linalg.norm(v_NED) > 0.1:
-            lines3d.append(([(0,0,0), (v_NED[1], v_NED[0], -v_NED[2])], 'r', 2))
-            texts3d.append((v_NED[1]+1, v_NED[0]+1, -v_NED[2]-1, 'V', 'k'))
+            lines3d.append(([(0,0,0), (v_NED[0], v_NED[1], v_NED[2])], 'r', 2))
+            texts3d.append((v_NED[0]+1, v_NED[1]+1, v_NED[2]+1, 'V', 'k'))
             
         R_body_to_NED, _, _, _, _ = calculos.rotation_matrix(phi, theta, psi, v_body)
         
-        scale = axis_length * 0.4
+        body_scale = axis_length * 0.4
         pts_body = np.array([
             [ 1.0,  0.0,  0.0],
             [-1.0,  0.0,  0.0],
             [-0.2,  1.0,  0.0],
             [-0.2, -1.0,  0.0],
-            [-1.0,  0.0, -0.4],
+            [-1.0,  0.0, 0.4],
             [-1.0,  0.0,  0.0],
         ]).T
         
-        pts_ned = R_body_to_NED @ pts_body * scale
+        pts_ned = R_body_to_NED @ pts_body * body_scale
+        # In our projection, positive Z goes DOWN visually.
+        # R_body_to_NED gives NED coords where Z_NED is positive DOWN.
+        # Negate Z so that nose-up (negative NED-Z) renders above center.
+        pts_ned[2, :] = -pts_ned[2, :]
         
         def map_ned(pts_ned, indices):
-            return [(pts_ned[1,i], pts_ned[0,i], -pts_ned[2,i]) for i in indices]
+            return [(pts_ned[0,i], pts_ned[1,i], pts_ned[2,i]) for i in indices]
 
         lines3d.append((map_ned(pts_ned, [0,1]), 'orange', 4))
         lines3d.append((map_ned(pts_ned, [2,3]), 'orange', 4))
@@ -505,14 +524,34 @@ class HUDInterface(QMainWindow):
         self.ned_canvas.texts = texts3d
         self.ned_canvas.update()
 
-        path3d_x = self.Pe[:idx+1]
-        path3d_y = self.Pn[:idx+1]
-        path3d_z = -self.Pd[:idx+1]
+        path3d_x = self.Pn[:idx+1]
+        path3d_y = self.Pe[:idx+1]
+        path3d_z = self.Pd[:idx+1]
         
         path3d_line = list(zip(path3d_x, path3d_y, path3d_z))
         
-        self.traj3d_canvas.axis_length = max(10, np.max(np.abs(path3d_x)), np.max(np.abs(path3d_y)), np.max(np.abs(path3d_z)))
-        self.traj3d_canvas.lines = [(path3d_line, 'blue', 2)]
+        if len(path3d_x) > 0:
+            traj_axis_length = max(10, np.max(np.abs(path3d_x)), np.max(np.abs(path3d_y)), np.max(np.abs(path3d_z)))
+        else:
+            traj_axis_length = 10
+            
+        self.traj3d_canvas.axis_length = traj_axis_length
+        
+        traj_lines3d = [
+            ([(0,0,0), (traj_axis_length,0,0)], 'b', 1),
+            ([(0,0,0), (0,traj_axis_length,0)], 'b', 1),
+            ([(0,0,0), (0,0,traj_axis_length)], 'b', 1),
+            (path3d_line, 'blue', 2)
+        ]
+        traj_texts3d = [
+            (traj_axis_length+1, 0, 0, 'N', 'b'),
+            (0, traj_axis_length+1, 0, 'E', 'b'),
+            (0, 0, traj_axis_length+1, 'D', 'b')
+        ]
+        
+        self.traj3d_canvas.lines = traj_lines3d
+        self.traj3d_canvas.texts = traj_texts3d
+        
         if idx > 0:
             self.traj3d_canvas.scatter = [(path3d_x[-1], path3d_y[-1], path3d_z[-1], 'red')]
         else:
