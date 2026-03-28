@@ -109,8 +109,11 @@ phi, theta, psi = 0, 0, 0 # Inicializar ángulos de Euler
 def integrate_imu_data(imu):
     u,v,w = 0, 0, 0 # Inicializar velocidades en el body
     x,y,z = 0, 0, 0 # Inicializar posiciones en el NED
+    phi, theta, psi = 0, 0, 0 # Inicializar ángulos de Euler localmente
     #listas para guardar los datos para graficar
     time_list, u_list, v_list, w_list, x_list, y_list, z_list, phi_list, theta_list, psi_list = [], [], [], [], [], [], [], [], [], []
+    vNED_list = []
+    P_ned_list = []
     for i in range(1, len(imu)):
         row = imu[i]
         row_prev = imu[i-1]
@@ -128,23 +131,21 @@ def integrate_imu_data(imu):
         w_dot = float(row["accel_z_m_s2"])
         a_body = np.array([u_dot, v_dot, w_dot]) # Aceleración en el sistema de referencia del body
         a_ned = R_body_to_NED @ a_body # Transformar la aceleración del body al NED
-        for j in range(1, len(imu)):
-            a_ned[j][2] -= 9.81 # Restar la gravedad a la componente vertical de la aceleración en el NED
-        #Integral para las velocidades
-        u= a_ned[0]
-        v= a_ned[1]
-        w= a_ned[2]
+        # `a_ned` es un vector de 3 componentes para la muestra actual.
+        # Restar la gravedad a la componente vertical (índice 2). No iteramos sobre `imu` aquí.
+        a_ned[2] -= 9.81
 
-        u += u_dot * dt
-        v += v_dot * dt
-        w += w_dot * dt
+        # Integrar aceleraciones para obtener velocidades en NED
+        u += a_ned[0] * dt
+        v += a_ned[1] * dt
+        w += a_ned[2] * dt
         v_NED = np.array([u, v, w]) # Velocidad actual en el NED
         #Integral para la posicion en el NED
-        Pn, Pe, Pd = 0, 0, 0 # Posición inicial en el NED
-        P_ned = np.array([Pn, Pe, Pd]) # Posición actual en el NED
-        P_ned[0] += v_NED[0] * dt
-        P_ned[1] += v_NED[1] * dt
-        P_ned[2] += v_NED[2] * dt *-1 # El eje Z del NED apunta hacia abajo, por eso se multiplica por -1
+        # Integrar velocidades para obtener posición (acumular)
+        x += v_NED[0] * dt
+        y += v_NED[1] * dt
+        z += v_NED[2] * dt * -1 # El eje Z del NED apunta hacia abajo
+        P_ned = np.array([x, y, z])
 
         #Integral para los ángulos de Euler
         euler_rates = angular_rates_to_euler(p, q, r, phi, theta)
@@ -157,8 +158,10 @@ def integrate_imu_data(imu):
         u_list.append(u); v_list.append(v); w_list.append(w)
         x_list.append(P_ned[0]); y_list.append(P_ned[1]); z_list.append(P_ned[2])
         phi_list.append(phi); theta_list.append(theta); psi_list.append(psi)
+        vNED_list.append(v_NED.copy())
+        P_ned_list.append(P_ned.copy())
 
-    return time_list, v_NED, P_ned, phi, theta, psi
+    return time_list, vNED_list, P_ned_list, phi, theta, psi
 
 def angle_2_quaternion(R_ned_to_body):
     qs = np.sqrt(0.25 * (R_ned_to_body[0,0] + R_ned_to_body[1,1] + R_ned_to_body[2,2] + 1))
