@@ -59,13 +59,17 @@ def sideslip_angle(u, v, w):
     return np.rad2deg(np.arcsin(v/V))
 
 
-def climb_angle(alpha_deg, pitch_deg):
+def climb_angle(v_NED):
     """
     Gamma (γ) — Climb Angle [deg]
     Relationship: pitch = alpha + gamma  →  gamma = pitch - alpha
     Valid when sideslip is zero (wings-level flight).
     """
-    return pitch_deg - alpha_deg
+    vx = v_NED[0]
+    vy = v_NED[1]
+    vz = -v_NED[2]
+
+    return np.rad2deg(np.arctan2(-vz, np.sqrt(vx**2 + vy**2)))
 
 
 #Este coso que dio el profe, todavia no entiendo para que sirve, pero lo dejo por las dudas.
@@ -84,7 +88,7 @@ def aircraft_state(alpha, beta, climb ,u, v, w, p, q, r, phi, theta, psi, v_body
     }
     return state_values
 
-estado = aircraft_state(alpha=angle_of_attack(u,w), beta=sideslip_angle(u,v,w), climb=climb_angle(angle_of_attack(u,w),theta), u=u, v=v, w=w, p=p, q=q, r=r, phi=phi, theta=theta, psi=psi, v_body=v_body)
+estado = aircraft_state(alpha=angle_of_attack(u,w), beta=sideslip_angle(u,v,w), climb=climb_angle(v_NED), u=u, v=v, w=w, p=p, q=q, r=r, phi=phi, theta=theta, psi=psi, v_body=v_body)
 pprint.pprint(estado)
 
 def angular_rates_to_euler(p, q, r, phi, theta):
@@ -165,7 +169,7 @@ def integrate_imu_data(imu):
         vNED_list.append(v_NED.copy())
         P_ned_list.append(P_ned.copy())
 
-    return time_list, vNED_list, P_ned_list, phi, theta, psi
+    return time_list, vNED_list, P_ned_list, phi, theta, psi, v_NED
 
 def angle_2_quaternion(R_ned_to_body):
     qs = np.sqrt(0.25 * (R_ned_to_body[0,0] + R_ned_to_body[1,1] + R_ned_to_body[2,2] + 1))

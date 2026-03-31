@@ -306,9 +306,9 @@ class HUDInterface(QMainWindow):
             w += w_dot * dt
             
             v_body = np.array([u, v, w])
-            # Getting v_NED and R_body_to_NED at current step
+            # Getting v_NED and R_body_to_NED at current step (NED: Z positive down)
             R_body_to_NED, v_NED, _, _, _ = calculos.rotation_matrix(phi, theta, psi, v_body)
-            P_ned = P_ned + np.array([v_NED[0], v_NED[1], -v_NED[2]]) * dt
+            P_ned = P_ned + v_NED * dt
             
             euler_rates = calculos.angular_rates_to_euler(p, q, r, phi, theta)
             phi += np.rad2deg(euler_rates[0] * dt)
@@ -446,18 +446,19 @@ class HUDInterface(QMainWindow):
         
         alpha = calculos.angle_of_attack(u, w)
         beta = calculos.sideslip_angle(u, v, w)
-        climb = calculos.climb_angle(alpha, theta)
+        climb = calculos.climb_angle(v_NED=v_NED)
         
         Pn = self.P_ned_list[idx][0]
         Pe = self.P_ned_list[idx][1]
-        # P_ned[2] was integrated with -v_NED[2]*dt so it's already altitude (positive = up)
-        altitude = self.P_ned_list[idx][2]
+        Pd = self.P_ned_list[idx][2]  # NED down-positive
+        altitude = -Pd  # Altitude up-positive
 
         text = (
             f"Position (NED):\n"
             f"Pn = {Pn:.1f} m\n"
             f"Pe = {Pe:.1f} m\n"
-            f"Alt = {altitude:.1f} m\n\n"
+            f"Pd = {Pd:.1f} m (down)\n"
+            f"Alt = {altitude:.1f} m (up)\n\n"
             f"Velocity on the body:\n"
             f"u = {u:.2f} m/s\n"
             f"v = {v:.2f} m/s\n"
@@ -526,7 +527,8 @@ class HUDInterface(QMainWindow):
 
         path3d_x = self.Pn[:idx+1]
         path3d_y = self.Pe[:idx+1]
-        path3d_z = self.Pd[:idx+1]
+        # Pn/Pe/Pd: Pd is NED down-positive. 3D plot axes use NED directions.
+        path3d_z = self.Pd[:idx+1]  # down-positive for D axis
         
         path3d_line = list(zip(path3d_x, path3d_y, path3d_z))
         
