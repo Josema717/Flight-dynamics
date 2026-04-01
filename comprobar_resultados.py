@@ -22,7 +22,7 @@ def compare_positions(gt_csv='tello_ground_truth.csv', imu_csv='tello_imu_exampl
     with open(imu_csv, 'r', newline='', encoding='utf-8') as f:
         imu = list(csv.DictReader(f))
 
-    time_list, _, P_ned, _, _, _ = calculos.integrate_imu_data(imu)
+    time_list, _, P_ned, _, _, _,_, _, _, _, _, _ = calculos.integrate_imu_data(imu)
     imu_times = np.array([float(t) for t in time_list], dtype=float)
 
     # Ensure P_ned is an array of shape (N,3)

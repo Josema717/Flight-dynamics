@@ -44,6 +44,7 @@ class BaseView(QWidget):
         self.title = title
         self.img = QImage(img_path)
         self.angle = 0.0
+        self.setMinimumSize(250, 180)
 
     def set_angle(self, angle):
         self.angle = angle
@@ -54,50 +55,68 @@ class BaseView(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         w, h = self.width(), self.height()
-        painter.fillRect(0, 0, w, h, QColor(255, 255, 255))
-        painter.drawText(10, 20, f"{self.title} = {self.angle:.1f}°")
+        painter.fillRect(0, 0, w, h, QColor('#1e1e1e')) # Subtle gray for views
+        
+        painter.setPen(QPen(QColor('#c9d1d9'), 1))
+        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        painter.drawText(10, 25, f"{self.title} = {self.angle:.1f}\u00b0")
+        
         self.draw_custom(painter, w/2, h/2, w, h)
 
 class YawView(BaseView):
     def draw_custom(self, painter, cx, cy, w, h):
-        scale = min(w, h) / 4.0
+        # ── CUSTOMIZE COLORS HERE ─────────────────────────────────────────
+        NED_N_COLOR = '#58a6ff' # Blueish
+        NED_E_COLOR = '#8b949e' # Gray
+        BODY_X_COLOR = '#3fb950' # Green
+        BODY_Y_COLOR = '#f85149' # Red
+        # ──────────────────────────────────────────────────────────────────
+        scale = min(w, h) / 3.2
         painter.translate(cx, cy)
-        draw_arrow(painter, 0, 0, 0, -scale, 'pink', 'N', (-15, -10))
-        draw_arrow(painter, 0, 0, scale, 0, 'purple', 'E', (10, 5))
+        draw_arrow(painter, 0, 0, 0, -scale, NED_N_COLOR, 'N', (-8, -15))
+        draw_arrow(painter, 0, 0, scale, 0, NED_E_COLOR, 'E', (10, 5))
+        
         painter.save()
         painter.rotate(self.angle)
-        img_s = scale * 1.0
-        painter.drawImage(QRectF(-img_s, -img_s, 2*img_s, 2*img_s), self.img)
-        draw_arrow(painter, 0, 0, 0, -scale, 'green', 'x_b', (-15, -10))
-        draw_arrow(painter, 0, 0, scale, 0, 'red', 'y_b', (10, 5))
+        img_s = scale * 0.8
+        if not self.img.isNull():
+            painter.drawImage(QRectF(-img_s, -img_s, 2*img_s, 2*img_s), self.img)
+        else:
+            painter.drawRect(QRectF(-img_s/2, -img_s, img_s, 2*img_s)) # Placeholder
+        draw_arrow(painter, 0, 0, 0, -scale, BODY_X_COLOR, 'x_b', (-10, -15))
+        draw_arrow(painter, 0, 0, scale, 0, BODY_Y_COLOR, 'y_b', (10, 5))
         painter.restore()
 
 class PitchView(BaseView):
     def draw_custom(self, painter, cx, cy, w, h):
-        scale = min(w, h) / 4.0
+        scale = min(w, h) / 3.2
         painter.translate(cx, cy)
-        draw_arrow(painter, 0, 0, scale, 0, 'purple', 'X', (10, 5))
-        draw_arrow(painter, 0, 0, 0, scale, 'black', 'Z', (-15, 20))
+        draw_arrow(painter, 0, 0, scale, 0, '#8b949e', 'X_ned', (10, 5))
+        draw_arrow(painter, 0, 0, 0, scale, '#58a6ff', 'Z_ned', (-15, 20))
+        
         painter.save()
         painter.rotate(-self.angle)
-        img_s = scale * 1.0
-        painter.drawImage(QRectF(-img_s, -img_s, 2*img_s, 2*img_s), self.img)
-        draw_arrow(painter, 0, 0, scale, 0, 'green', 'x_b', (10, 5))
-        draw_arrow(painter, 0, 0, 0, scale, 'blue', 'z_b', (-15, 20))
+        img_s = scale * 0.8
+        if not self.img.isNull():
+            painter.drawImage(QRectF(-img_s, -img_s, 2*img_s, 2*img_s), self.img)
+        draw_arrow(painter, 0, 0, scale, 0, '#3fb950', 'x_b', (10, 5))
+        draw_arrow(painter, 0, 0, 0, scale, '#d29922', 'z_b', (-15, 20))
         painter.restore()
 
 class RollView(BaseView):
     def draw_custom(self, painter, cx, cy, w, h):
-        scale = min(w, h) / 4.0
+        scale = min(w, h) / 3.2
         painter.translate(cx, cy)
-        draw_arrow(painter, 0, 0, scale, 0, 'pink', 'Y', (10, 5))
-        draw_arrow(painter, 0, 0, 0, scale, 'black', 'Z', (-15, 20))
+        draw_arrow(painter, 0, 0, scale, 0, '#8b949e', 'Y_ned', (10, 5))
+        draw_arrow(painter, 0, 0, 0, scale, '#58a6ff', 'Z_ned', (-15, 20))
+        
         painter.save()
         painter.rotate(self.angle)
-        img_s = scale * 1.0
-        painter.drawImage(QRectF(-img_s, -img_s, 2*img_s, 2*img_s), self.img)
-        draw_arrow(painter, 0, 0, scale, 0, 'red', 'y_b', (10, 5))
-        draw_arrow(painter, 0, 0, 0, scale, 'blue', 'z_b', (-15, 20))
+        img_s = scale * 0.8
+        if not self.img.isNull():
+            painter.drawImage(QRectF(-img_s, -img_s, 2*img_s, 2*img_s), self.img)
+        draw_arrow(painter, 0, 0, scale, 0, '#f85149', 'y_b', (10, 5))
+        draw_arrow(painter, 0, 0, 0, scale, '#d29922', 'z_b', (-15, 20))
         painter.restore()
 
 class ViewsCanvas(QWidget):
@@ -128,6 +147,7 @@ class Plot3DWidget(QWidget):
         x_rot = x * np.cos(az) + y * np.sin(az)
         y_rot = -x * np.sin(az) + y * np.cos(az)
         xp = y_rot
+        # Restoring standard NED mapping: positive Z moves visually DOWN
         yp = -x_rot * np.sin(el) + z * np.cos(el)
         return cx + xp * scale, cy + yp * scale
 
@@ -160,6 +180,159 @@ class Plot3DWidget(QWidget):
             px, py = self.project(x, y, z, cx, cy, scale)
             painter.drawEllipse(QPointF(px, py), 4, 4)
 
+class Trajectory3DWidget(QWidget):
+    """Sleek PyQt-based 3D trajectory view.
+    Includes mouse-orbit rotation, plasma trail, ground shadows, and status labels.
+    """
+    def __init__(self, title="3D Trajectory"):
+        super().__init__()
+        self.title = title
+        self.Pn, self.Pe, self.Alt = [], [], []
+        self.time_list = []
+        self.current_idx = 0
+        
+        self.elev = 25.0
+        self.azim = -60.0
+        self.last_mouse_pos = None
+        self.setMinimumHeight(450)
+        self.setMouseTracking(True)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        painter.fillRect(0, 0, w, h, QColor('#0d1117'))
+        
+        cx, cy = w/2, h/2
+        # Auto-scaling logic
+        n = len(self.Pn)
+        if n < 1: return
+        
+        extent = max(5.0, np.max(np.abs(self.Pn)), np.max(np.abs(self.Pe)), np.max(np.abs(self.Alt)))
+        scale = min(w, h) / (extent * 2.5)
+
+        def project(x, y, z):
+            """X=North, Y=East, Z=Down (NED RHR).
+            Elev=0, Azim=-90 looks towards North.
+            """
+            ae = np.deg2rad(self.elev)
+            az = np.deg2rad(self.azim)
+            # Standard 3D Rotation
+            x1 = x * np.cos(az) + y * np.sin(az)
+            y1 = -x * np.sin(az) + y * np.cos(az)
+            
+            xp = y1
+            # "JUST FLIP THE AXIS": Inverting the vertical projection.
+            # Previously -x1*sin(ae) + z*cos(ae). Now we flip the z component.
+            yp = -x1 * np.sin(ae) - z * np.cos(ae)
+            return cx + xp * scale, cy + yp * scale
+
+        # Draw Ground Grid (X-Y plane shadow area)
+        z0 = 0.0
+        painter.setPen(QPen(QColor('#161b22'), 1))
+        # Draw some reference circles/lines on ground
+        for d in [5, 10, 20]:
+            poly = QPolygonF()
+            for deg in range(0, 361, 10):
+                gx, gy = d * np.cos(np.deg2rad(deg)), d * np.sin(np.deg2rad(deg))
+                px, py = project(gx, gy, z0)
+                poly.append(QPointF(px, py))
+            painter.drawPolyline(poly)
+
+        # Draw Axis Labels
+        painter.setPen(QPen(QColor('#30363d')))
+        for axis, vec in [('N', (extent, 0, 0)), ('E', (0, extent, 0)), ('Alt', (0, 0, extent))]:
+            px, py = project(*vec)
+            painter.drawLine(int(cx), int(cy), int(px), int(py))
+            painter.drawText(int(px)+5, int(py)+5, axis)
+
+        # Draw Ground Shadow Path (Dashed blue)
+        painter.setPen(QPen(QColor('#58a6ff'), 1, Qt.PenStyle.DashLine))
+        shadow_poly = QPolygonF()
+        for i in range(n):
+            px, py = project(self.Pn[i], self.Pe[i], z0)
+            shadow_poly.append(QPointF(px, py))
+        painter.drawPolyline(shadow_poly)
+
+        # Draw Trajectory Gradient Path (Plasma Trail)
+        # We draw segment by segment to change colors
+        def get_plasma_color(idx, total):
+            """EDIT THIS FUNCTION TO CHANGE TRAIL COLORS"""
+            ratio = idx / max(1, total)
+            # Simple plasma-like gradient: Purple(0) -> Red(0.5) -> Yellow(1)
+            if ratio < 0.5:
+                r = int(120 + 135 * (ratio * 2))
+                b = int(255 * (1 - ratio * 2))
+                return QColor(r, 0, b)
+            else:
+                r = 255
+                g = int(255 * (ratio - 0.5) * 2)
+                return QColor(r, g, 0)
+
+        for i in range(n - 1):
+            p1 = project(self.Pn[i], self.Pe[i], self.Alt[i])
+            p2 = project(self.Pn[i+1], self.Pe[i+1], self.Alt[i+1])
+            painter.setPen(QPen(get_plasma_color(i, n), 3))
+            painter.drawLine(QPointF(*p1), QPointF(*p2))
+
+        # Start Marker (Green)
+        start_px, start_py = project(self.Pn[0], self.Pe[0], self.Alt[0])
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor('#3fb950'))
+        painter.drawEllipse(QPointF(start_px, start_py), 5, 5)
+        painter.setPen(QColor('#3fb950'))
+        painter.drawText(int(start_px)+8, int(start_py), "Start")
+
+        # Current Marker (Red) + Drop Line
+        curr_px, curr_py = project(self.Pn[-1], self.Pe[-1], self.Alt[-1])
+        ground_px, ground_py = project(self.Pn[-1], self.Pe[-1], z0)
+        
+        # Vertical Drop Line
+        painter.setPen(QPen(QColor('#f85149'), 1, Qt.PenStyle.DotLine))
+        painter.drawLine(QPointF(curr_px, curr_py), QPointF(ground_px, ground_py))
+        
+        # Red Sphere
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor('#f85149'))
+        painter.drawEllipse(QPointF(curr_px, curr_py), 7, 7)
+        
+        # Info Text
+        painter.setPen(QColor('#f85149'))
+        painter.setFont(QFont("Monospace", 9))
+        t_now = self.time_list[self.current_idx] if self.time_list else 0.0
+        painter.drawText(int(curr_px)+10, int(curr_py), f"t={t_now:.1f}s")
+        
+        painter.setPen(QColor('#c9d1d9'))
+        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        painter.drawText(20, 30, self.title)
+        painter.setFont(QFont("Segoe UI", 8))
+        painter.drawText(20, 50, "Drag to Rotate")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.last_mouse_pos = event.pos()
+
+    def mouseMoveEvent(self, event):
+        if self.last_mouse_pos is not None:
+            delta = event.pos() - self.last_mouse_pos
+            self.azim += delta.x() * 0.5
+            self.elev -= delta.y() * 0.5
+            self.elev = max(-90.0, min(90.0, self.elev))
+            self.last_mouse_pos = event.pos()
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        self.last_mouse_pos = None
+
+    def update_trajectory(self, Pn, Pe, Alt, time_list, idx):
+        self.Pn = Pn
+        self.Pe = Pe
+        self.Alt = Alt
+        self.time_list = time_list
+        self.current_idx = idx
+        self.update()
+
+
 class Plot2DWidget(QWidget):
     def __init__(self, title="", xlabel="", ylabel=""):
         super().__init__()
@@ -168,14 +341,27 @@ class Plot2DWidget(QWidget):
         self.ylabel = ylabel
         self.lines = []
         self.scatter = []
+        self.setMinimumHeight(180) # Prevent collapsing
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
-        painter.fillRect(0, 0, w, h, QColor(255, 255, 255))
         
-        pad_l, pad_r, pad_t, pad_b = 50, 20, 30, 40
+        # Professional Dark Theme Palette
+        BG_COLOR     = QColor('#0d1117')
+        GRID_COLOR   = QColor('#21262d')
+        AXIS_COLOR   = QColor('#8b949e')
+        TEXT_COLOR   = QColor('#c9d1d9')
+        
+        painter.fillRect(0, 0, w, h, BG_COLOR)
+        
+        # Responsive Padding (Relative to window size)
+        pad_l = max(65, int(w * 0.08))
+        pad_r = max(20, int(w * 0.03))
+        pad_t = max(40, int(h * 0.12))
+        pad_b = max(50, int(h * 0.15))
+        
         plot_w = w - pad_l - pad_r
         plot_h = h - pad_t - pad_b
         
@@ -184,14 +370,14 @@ class Plot2DWidget(QWidget):
         x_min, x_max, y_min, y_max = float('inf'), float('-inf'), float('inf'), float('-inf')
         for x_data, y_data, _ in self.lines:
             if len(x_data) > 0:
-                x_min = min(x_min, np.min(x_data))
-                x_max = max(x_max, np.max(x_data))
-                y_min = min(y_min, np.min(y_data))
-                y_max = max(y_max, np.max(y_data))
+                x_min = min(x_min, float(np.min(x_data)))
+                x_max = max(x_max, float(np.max(x_data)))
+                y_min = min(y_min, float(np.min(y_data)))
+                y_max = max(y_max, float(np.max(y_data)))
                 
         for x, y, _ in self.scatter:
-            x_min, x_max = min(x_min, x), max(x_max, x)
-            y_min, y_max = min(y_min, y), max(y_max, y)
+            x_min, x_max = min(x_min, float(x)), max(x_max, float(x))
+            y_min, y_max = min(y_min, float(y)), max(y_max, float(y))
             
         if x_max == float('inf'):
             x_min, x_max, y_min, y_max = 0, 1, 0, 1
@@ -199,7 +385,14 @@ class Plot2DWidget(QWidget):
         if x_max == x_min: x_max, x_min = x_min + 1, x_min - 1
         if y_max == y_min: y_max, y_min = y_min + 1, y_min - 1
         
-        dy = (y_max - y_min) * 0.1
+        # Ensure a minimum range for stability
+        min_y_range = 10.0 if "°" in self.ylabel else 0.5
+        if (y_max - y_min) < min_y_range:
+            mid = (y_max + y_min) / 2
+            y_max = mid + min_y_range / 2
+            y_min = mid - min_y_range / 2
+
+        dy = (y_max - y_min) * 0.30 # Generous 30% padding
         y_min -= dy
         y_max += dy
         
@@ -208,40 +401,62 @@ class Plot2DWidget(QWidget):
             py = h - pad_b - (y - y_min) / (y_max - y_min) * plot_h
             return QPointF(px, py)
 
-        painter.setPen(QPen(QColor(200, 200, 200), 1))
+        # Draw Grid & Ticks
+        painter.setPen(QPen(GRID_COLOR, 1, Qt.PenStyle.DashLine))
+        
+        # Dynamic Font Sizing
+        base_font_size = max(7, min(10, int(h / 60)))
+        font = QFont("Segoe UI", base_font_size)
+        painter.setFont(font)
+        
         for i in range(5):
+            # Horizontal lines
             y_val = y_min + i * (y_max - y_min) / 4
             p1 = to_px(x_min, y_val)
             p2 = to_px(x_max, y_val)
-            painter.drawLine(p1, QPointF(p2.x(), p1.y()))
-            painter.setPen(QPen(QColor('black')))
-            painter.drawText(QRectF(0, p1.y() - 10, pad_l - 5, 20), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{y_val:.1f}")
-            painter.setPen(QPen(QColor(200, 200, 200), 1))
+            painter.drawLine(int(p1.x()), int(p1.y()), int(p2.x()), int(p1.y()))
+            painter.setPen(QPen(AXIS_COLOR))
+            # Offset labels properly
+            painter.drawText(QRectF(0, p1.y() - 10, pad_l - 8, 20), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{y_val:.1f}")
+            painter.setPen(QPen(GRID_COLOR, 1, Qt.PenStyle.DashLine))
 
+        # Main Axes
+        painter.setPen(QPen(AXIS_COLOR, 2))
+        painter.drawLine(pad_l, pad_t, pad_l, h-pad_b)
+        painter.drawLine(pad_l, h-pad_b, w-pad_r, h-pad_b)
+
+        # Data Lines
         for x_data, y_data, color in self.lines:
-            if len(x_data) == 0: continue
-            painter.setPen(QPen(QColor(color), 2))
+            if len(x_data) < 2: continue
+            painter.setPen(QPen(QColor(color), 2, Qt.PenStyle.SolidLine))
             poly = QPolygonF()
             for x, y in zip(x_data, y_data):
-                poly.append(to_px(x, y))
+                px_pt = to_px(x, y)
+                # Keep points inside plot area visually
+                poly.append(px_pt)
             painter.drawPolyline(poly)
             
+        # Current Samples
         for x, y, color in self.scatter:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(color))
             pt = to_px(x, y)
-            painter.drawEllipse(pt, 4, 4)
+            painter.drawEllipse(pt, 5, 5)
             
-        painter.setPen(QPen(QColor('black')))
+        # Labels (Scaled)
+        title_font_size = max(9, min(12, int(h / 45)))
+        painter.setPen(QPen(TEXT_COLOR))
+        painter.setFont(QFont("Segoe UI", title_font_size, QFont.Weight.Bold))
         painter.drawText(QRectF(pad_l, 0, plot_w, pad_t), Qt.AlignmentFlag.AlignCenter, self.title)
         
+        painter.setFont(QFont("Segoe UI", base_font_size))
         painter.save()
         painter.translate(15, pad_t + plot_h/2)
         painter.rotate(-90)
         painter.drawText(QRectF(-plot_h/2, -15, plot_h, 30), Qt.AlignmentFlag.AlignCenter, self.ylabel)
         painter.restore()
 
-        painter.drawText(QRectF(pad_l, h - 25, plot_w, 25), Qt.AlignmentFlag.AlignCenter, self.xlabel)
+        painter.drawText(QRectF(pad_l, h - 30, plot_w, 25), Qt.AlignmentFlag.AlignCenter, self.xlabel)
 
 class TriplePlotCanvas(QWidget):
     def __init__(self, title1, title2, title3, xlabel, parent=None):
@@ -273,60 +488,31 @@ class HUDInterface(QMainWindow):
         self.setWindowTitle("HUD Viewer")
         self.resize(1200, 800)
 
-        # Load Data
+        # Load Data – integration delegated to calculos.integrate_imu_data
         with open(csv_file, 'r', newline='', encoding='utf-8') as f:
             imu = list(csv.DictReader(f))
 
-        self.time_list = [float(imu[0]["time_s"])]
-        self.u_list, self.v_list, self.w_list = [0.0], [0.0], [0.0]
-        self.phi_list, self.theta_list, self.psi_list = [0.0], [0.0], [0.0]
-        self.v_NED_list = [np.array([0.0, 0.0, 0.0])]
-        self.P_ned_list = [np.array([0.0, 0.0, 0.0])]
-        self.p_list, self.q_list, self.r_list = [0.0], [0.0], [0.0]
+        t0 = float(imu[0]["time_s"])
+        (time_l, vNED_l, Pned_l,
+         phi_l, theta_l, psi_l,
+         p_l, q_l, r_l,
+         u_l, v_l, w_l) = calculos.integrate_imu_data(imu)
 
-        u, v, w = 0.0, 0.0, 0.0
-        phi, theta, psi = 0.0, 0.0, 0.0
-        P_ned = np.array([0.0, 0.0, 0.0])
-
-        for i in range(1, len(imu)):
-            row = imu[i]
-            row_prev = imu[i-1]
-            dt = float(row["time_s"]) - float(row_prev["time_s"])
-            
-            p = float(row["gyro_p_rad_s"])
-            q = float(row["gyro_q_rad_s"])
-            r = float(row["gyro_r_rad_s"])
-            
-            u_dot = float(row["accel_x_m_s2"])
-            v_dot = float(row["accel_y_m_s2"])
-            w_dot = float(row["accel_z_m_s2"]) + 9.81
-            
-            u += u_dot * dt
-            v += v_dot * dt
-            w += w_dot * dt
-            
-            v_body = np.array([u, v, w])
-            # Getting v_NED and R_body_to_NED at current step
-            R_body_to_NED, v_NED, _, _, _ = calculos.rotation_matrix(phi, theta, psi, v_body)
-            P_ned = P_ned + np.array([v_NED[0], v_NED[1], -v_NED[2]]) * dt
-            
-            euler_rates = calculos.angular_rates_to_euler(p, q, r, phi, theta)
-            phi += np.rad2deg(euler_rates[0] * dt)
-            theta += np.rad2deg(euler_rates[1] * dt)
-            psi += np.rad2deg(euler_rates[2] * dt)
-            
-            self.time_list.append(float(row["time_s"]))
-            self.u_list.append(u)
-            self.v_list.append(v)
-            self.w_list.append(w)
-            self.phi_list.append(phi)
-            self.theta_list.append(theta)
-            self.psi_list.append(psi)
-            self.v_NED_list.append(v_NED)
-            self.P_ned_list.append(P_ned)
-            self.p_list.append(p)
-            self.q_list.append(q)
-            self.r_list.append(r)
+        # Prepend initial state (all zeros) so index 0 = t0 with no motion
+        _z = np.array([0., 0., 0.])
+        self.time_list  = [t0]   + time_l
+        self.phi_list   = [0.0]  + phi_l
+        self.theta_list = [0.0]  + theta_l
+        self.psi_list   = [0.0]  + psi_l
+        self.p_list     = [0.0]  + p_l
+        self.q_list     = [0.0]  + q_l
+        self.r_list     = [0.0]  + r_l
+        self.v_NED_list = [_z.copy()] + vNED_l
+        self.P_ned_list = [_z.copy()] + Pned_l
+        # u/v/w are body-frame velocities (derived in integrate_imu_data via R.T @ v_NED)
+        self.u_list     = [0.0]  + u_l
+        self.v_list     = [0.0]  + v_l
+        self.w_list     = [0.0]  + w_l
             
         self.n_points = len(self.time_list)
 
@@ -356,7 +542,7 @@ class HUDInterface(QMainWindow):
         self.ned_canvas = Plot3DWidget()
         self.plot_tabs.addTab(self.ned_canvas, "NED Frame")
         
-        self.traj3d_canvas = Plot3DWidget(title="3D Trajectory")
+        self.traj3d_canvas = Trajectory3DWidget()
         self.plot_tabs.addTab(self.traj3d_canvas, "3D Trajectory")
         
         self.traj2d_canvas = Plot2DWidget(title="2D Trajectory (East vs North)", xlabel="East", ylabel="North")
@@ -368,8 +554,11 @@ class HUDInterface(QMainWindow):
         self.rates_canvas = TriplePlotCanvas("p (rad/s)", "q (rad/s)", "r (rad/s)", "Time (s)", self)
         self.plot_tabs.addTab(self.rates_canvas, "Angular Rates")
 
+        top_widget.setMinimumHeight(280)
         splitter.addWidget(top_widget)
         splitter.addWidget(bottom_widget)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
 
         ctrl_layout = QHBoxLayout()
         self.play_button = QPushButton("Play")
@@ -394,11 +583,64 @@ class HUDInterface(QMainWindow):
         self.current_idx = 0
         self.is_playing = False
         
-        self.Pn = np.array([p[0] for p in self.P_ned_list])
-        self.Pe = np.array([p[1] for p in self.P_ned_list])
-        self.Pd = np.array([p[2] for p in self.P_ned_list])
+        self.Pn  = np.array([p[0] for p in self.P_ned_list])
+        self.Pe  = np.array([p[1] for p in self.P_ned_list])
+        self.Alt = np.array([p[2] for p in self.P_ned_list])
         
-        self.update_plots()
+        # Apply Professional Dark Theme QSS
+        self.setStyleSheet("""
+            QMainWindow, QWidget#centralWidget {
+                background-color: #0d1117;
+                color: #c9d1d9;
+            }
+            QTabWidget::pane {
+                border: 1px solid #30363d;
+                background-color: #0d1117;
+            }
+            QTabBar::tab {
+                background-color: #161b22;
+                border: 1px solid #30363d;
+                padding: 8px 15px;
+                color: #8b949e;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background-color: #0d1117;
+                color: #c9d1d9;
+                border-bottom-color: #0d1117;
+            }
+            QPushButton {
+                background-color: #21262d;
+                border: 1px solid #30363d;
+                border-radius: 4px;
+                padding: 5px 15px;
+                color: #c9d1d9;
+            }
+            QPushButton:hover {
+                background-color: #30363d;
+            }
+            QLabel {
+                color: #c9d1d9;
+            }
+            QSlider::groove:horizontal {
+                border: 1px solid #30363d;
+                height: 8px;
+                background: #161b22;
+                margin: 2px 0;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal {
+                background: #58a6ff;
+                border: 1px solid #30363d;
+                width: 18px;
+                margin: -5px 0;
+                border-radius: 9px;
+            }
+        """)
+        
+        splitter.setSizes([400, 400]) # Equal distribution or adjust as needed
+        self.update_plots()  # render initial state
 
     def toggle_play(self):
         if self.is_playing:
@@ -446,18 +688,20 @@ class HUDInterface(QMainWindow):
         
         alpha = calculos.angle_of_attack(u, w)
         beta = calculos.sideslip_angle(u, v, w)
-        climb = calculos.climb_angle(alpha, theta)
+        climb = calculos.climb_angle(v_NED=v_NED)
         
-        Pn = self.P_ned_list[idx][0]
-        Pe = self.P_ned_list[idx][1]
-        # P_ned[2] was integrated with -v_NED[2]*dt so it's already altitude (positive = up)
-        altitude = self.P_ned_list[idx][2]
+        Pn       = self.P_ned_list[idx][0]
+        Pe       = self.P_ned_list[idx][1]
+        # calculos stores z as altitude (positive-up); Pd is its negative
+        altitude = self.P_ned_list[idx][2]   # positive when above ground
+        Pd       = -altitude                  # NED down-positive (negative when above ground)
 
         text = (
             f"Position (NED):\n"
             f"Pn = {Pn:.1f} m\n"
             f"Pe = {Pe:.1f} m\n"
-            f"Alt = {altitude:.1f} m\n\n"
+            f"Pd = {Pd:.1f} m (down)\n"
+            f"Alt = {altitude:.1f} m (up)\n\n"
             f"Velocity on the body:\n"
             f"u = {u:.2f} m/s\n"
             f"v = {v:.2f} m/s\n"
@@ -524,39 +768,13 @@ class HUDInterface(QMainWindow):
         self.ned_canvas.texts = texts3d
         self.ned_canvas.update()
 
-        path3d_x = self.Pn[:idx+1]
-        path3d_y = self.Pe[:idx+1]
-        path3d_z = self.Pd[:idx+1]
-        
-        path3d_line = list(zip(path3d_x, path3d_y, path3d_z))
-        
-        if len(path3d_x) > 0:
-            traj_axis_length = max(10, np.max(np.abs(path3d_x)), np.max(np.abs(path3d_y)), np.max(np.abs(path3d_z)))
-        else:
-            traj_axis_length = 10
-            
-        self.traj3d_canvas.axis_length = traj_axis_length
-        
-        traj_lines3d = [
-            ([(0,0,0), (traj_axis_length,0,0)], 'b', 1),
-            ([(0,0,0), (0,traj_axis_length,0)], 'b', 1),
-            ([(0,0,0), (0,0,traj_axis_length)], 'b', 1),
-            (path3d_line, 'blue', 2)
-        ]
-        traj_texts3d = [
-            (traj_axis_length+1, 0, 0, 'N', 'b'),
-            (0, traj_axis_length+1, 0, 'E', 'b'),
-            (0, 0, traj_axis_length+1, 'D', 'b')
-        ]
-        
-        self.traj3d_canvas.lines = traj_lines3d
-        self.traj3d_canvas.texts = traj_texts3d
-        
-        if idx > 0:
-            self.traj3d_canvas.scatter = [(path3d_x[-1], path3d_y[-1], path3d_z[-1], 'red')]
-        else:
-            self.traj3d_canvas.scatter = []
-        self.traj3d_canvas.update()
+        # ── 3-D trajectory (PyQt logic) ───────────────────────────────────
+        # Use Pd (NED-Down) to follow Right Hand Rule logic in Trajectory3DWidget.
+        # Negative Pd values (climbing) will be projected UP in the view.
+        self.traj3d_canvas.update_trajectory(
+            self.Pn[:idx+1], self.Pe[:idx+1], -self.Alt[:idx+1],
+            self.time_list, idx
+        )
 
         self.traj2d_canvas.lines = [(self.Pe[:idx+1], self.Pn[:idx+1], 'green')]
         if idx > 0:

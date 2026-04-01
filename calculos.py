@@ -59,13 +59,17 @@ def sideslip_angle(u, v, w):
     return np.rad2deg(np.arcsin(v/V))
 
 
-def climb_angle(alpha_deg, pitch_deg):
+def climb_angle(v_NED):
     """
     Gamma (γ) — Climb Angle [deg]
     Relationship: pitch = alpha + gamma  →  gamma = pitch - alpha
     Valid when sideslip is zero (wings-level flight).
     """
-    return pitch_deg - alpha_deg
+    vx = v_NED[0]
+    vy = v_NED[1]
+    vz = -v_NED[2]
+
+    return np.rad2deg(np.arctan2(-vz, np.sqrt(vx**2 + vy**2)))
 
 
 #Este coso que dio el profe, todavia no entiendo para que sirve, pero lo dejo por las dudas.
@@ -84,7 +88,7 @@ def aircraft_state(alpha, beta, climb ,u, v, w, p, q, r, phi, theta, psi, v_body
     }
     return state_values
 
-estado = aircraft_state(alpha=angle_of_attack(u,w), beta=sideslip_angle(u,v,w), climb=climb_angle(angle_of_attack(u,w),theta), u=u, v=v, w=w, p=p, q=q, r=r, phi=phi, theta=theta, psi=psi, v_body=v_body)
+estado = aircraft_state(alpha=angle_of_attack(u,w), beta=sideslip_angle(u,v,w), climb=climb_angle(v_NED), u=u, v=v, w=w, p=p, q=q, r=r, phi=phi, theta=theta, psi=psi, v_body=v_body)
 pprint.pprint(estado)
 
 def angular_rates_to_euler(p, q, r, phi, theta):
@@ -109,11 +113,16 @@ phi, theta, psi = 0, 0, 0 # Inicializar ángulos de Euler
 def integrate_imu_data(imu):
     u,v,w = 0, 0, 0 # Inicializar velocidades en el body
     x,y,z = 0, 0, 0 # Inicializar posiciones en el NED
+    vx,vy,vz = 0,0,0 # Inicializar velocidades en el NED
     phi, theta, psi = 0, 0, 0 # Inicializar ángulos de Euler localmente
     #listas para guardar los datos para graficar
     time_list, u_list, v_list, w_list, x_list, y_list, z_list, phi_list, theta_list, psi_list = [], [], [], [], [], [], [], [], [], []
     vNED_list = []
     P_ned_list = []
+    p_list, q_list, r_list = [], [], []
+    u_body_list, v_body_list, w_body_list = [], [], []
+    # Body-frame velocity accumulators (gravity removed in body frame, like check.py)
+    u_b, v_b, w_b = 0.0, 0.0, 0.0
     for i in range(1, len(imu)):
         row = imu[i]
         row_prev = imu[i-1]
@@ -124,22 +133,34 @@ def integrate_imu_data(imu):
         q = float(row["gyro_q_rad_s"])
         r = float(row["gyro_r_rad_s"])
         omega_body = np.array([p, q, r]) # Velocidad angular en el sistema de referencia del body
+        
+        #Integral para los ángulos de Euler
+        euler_rates = angular_rates_to_euler(p, q, r, phi, theta)
+        phi += np.rad2deg(euler_rates[0] * dt)
+        theta += np.rad2deg(euler_rates[1] * dt)
+        psi += np.rad2deg(euler_rates[2] * dt)
+        R_body_to_NED, _, _, _, _ = rotation_matrix(phi, theta, psi, v_body)
 
-        # Crear el vector de velocidades en el body
+        # Crear el vector de aceleracion en el body
         u_dot = float(row["accel_x_m_s2"])
         v_dot = float(row["accel_y_m_s2"])
-        w_dot = float(row["accel_z_m_s2"])
-        a_body = np.array([u_dot, v_dot, w_dot]) # Aceleración en el sistema de referencia del body
-        a_ned = R_body_to_NED @ a_body # Transformar la aceleración del body al NED
-        # `a_ned` es un vector de 3 componentes para la muestra actual.
-        # Restar la gravedad a la componente vertical (índice 2). No iteramos sobre `imu` aquí.
-        a_ned[2] -= 9.81
+        w_dot = float(row["accel_z_m_s2"]) + 9.81  # Remove gravity in body frame (accel_z ≈ -9.81 level → w_dot ≈ 0)
+        a_body = np.array([u_dot, v_dot, w_dot])
 
+        # Body-frame velocity integration (clean, no gravity drift)
+        u_b += u_dot * dt
+        v_b += v_dot * dt
+        w_b += w_dot * dt
+
+        a_ned = R_body_to_NED @ a_body # Transformar la aceleración del body al NED
+        # a_body already has gravity removed in body frame; rotating to NED gives
+        # the true NED acceleration directly (no further gravity subtraction needed).
+        
         # Integrar aceleraciones para obtener velocidades en NED
-        u += a_ned[0] * dt
-        v += a_ned[1] * dt
-        w += a_ned[2] * dt
-        v_NED = np.array([u, v, w]) # Velocidad actual en el NED
+        vx += a_ned[0] * dt
+        vy += a_ned[1] * dt
+        vz += a_ned[2] * dt
+        v_NED = np.array([vx, vy, vz]) # Velocidad actual en el NED
         #Integral para la posicion en el NED
         # Integrar velocidades para obtener posición (acumular)
         x += v_NED[0] * dt
@@ -147,21 +168,24 @@ def integrate_imu_data(imu):
         z += v_NED[2] * dt * -1 # El eje Z del NED apunta hacia abajo
         P_ned = np.array([x, y, z])
 
-        #Integral para los ángulos de Euler
-        euler_rates = angular_rates_to_euler(p, q, r, phi, theta)
-        phi += np.rad2deg(euler_rates[0] * dt)
-        theta += np.rad2deg(euler_rates[1] * dt)
-        psi += np.rad2deg(euler_rates[2] * dt)
-
+    
         #Guardar los datos para graficar
         time_list.append(float(imu[i]["time_s"]))
-        u_list.append(u); v_list.append(v); w_list.append(w)
+        u_list.append(vx); v_list.append(vy); w_list.append(vz)
         x_list.append(P_ned[0]); y_list.append(P_ned[1]); z_list.append(P_ned[2])
         phi_list.append(phi); theta_list.append(theta); psi_list.append(psi)
         vNED_list.append(v_NED.copy())
         P_ned_list.append(P_ned.copy())
+        p_list.append(p); q_list.append(q); r_list.append(r)
+        # Body-frame velocities from direct body integration (w ≈ 0 during level flight)
+        u_body_list.append(u_b)
+        v_body_list.append(v_b)
+        w_body_list.append(w_b)
 
-    return time_list, vNED_list, P_ned_list, phi, theta, psi
+    return (time_list, vNED_list, P_ned_list,
+            phi_list, theta_list, psi_list,
+            p_list, q_list, r_list,
+            u_body_list, v_body_list, w_body_list)
 
 def angle_2_quaternion(R_ned_to_body):
     qs = np.sqrt(0.25 * (R_ned_to_body[0,0] + R_ned_to_body[1,1] + R_ned_to_body[2,2] + 1))
