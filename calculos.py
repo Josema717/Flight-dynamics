@@ -119,6 +119,10 @@ def integrate_imu_data(imu):
     time_list, u_list, v_list, w_list, x_list, y_list, z_list, phi_list, theta_list, psi_list = [], [], [], [], [], [], [], [], [], []
     vNED_list = []
     P_ned_list = []
+    p_list, q_list, r_list = [], [], []
+    u_body_list, v_body_list, w_body_list = [], [], []
+    # Body-frame velocity accumulators (gravity removed in body frame, like check.py)
+    u_b, v_b, w_b = 0.0, 0.0, 0.0
     for i in range(1, len(imu)):
         row = imu[i]
         row_prev = imu[i-1]
@@ -140,13 +144,17 @@ def integrate_imu_data(imu):
         # Crear el vector de aceleracion en el body
         u_dot = float(row["accel_x_m_s2"])
         v_dot = float(row["accel_y_m_s2"])
-        w_dot = float(row["accel_z_m_s2"])
-        a_body = np.array([u_dot, v_dot, w_dot]) # Aceleración en el sistema de referencia del body
+        w_dot = float(row["accel_z_m_s2"]) + 9.81  # Remove gravity in body frame (accel_z ≈ -9.81 level → w_dot ≈ 0)
+        a_body = np.array([u_dot, v_dot, w_dot])
+
+        # Body-frame velocity integration (clean, no gravity drift)
+        u_b += u_dot * dt
+        v_b += v_dot * dt
+        w_b += w_dot * dt
 
         a_ned = R_body_to_NED @ a_body # Transformar la aceleración del body al NED
-        # `a_ned` es un vector de 3 componentes para la muestra actual.
-        # Restar la gravedad a la componente vertical (índice 2). No iteramos sobre `imu` aquí.
-        a_ned[2] -= 9.81
+        # a_body already has gravity removed in body frame; rotating to NED gives
+        # the true NED acceleration directly (no further gravity subtraction needed).
         
         # Integrar aceleraciones para obtener velocidades en NED
         vx += a_ned[0] * dt
@@ -168,8 +176,16 @@ def integrate_imu_data(imu):
         phi_list.append(phi); theta_list.append(theta); psi_list.append(psi)
         vNED_list.append(v_NED.copy())
         P_ned_list.append(P_ned.copy())
+        p_list.append(p); q_list.append(q); r_list.append(r)
+        # Body-frame velocities from direct body integration (w ≈ 0 during level flight)
+        u_body_list.append(u_b)
+        v_body_list.append(v_b)
+        w_body_list.append(w_b)
 
-    return time_list, vNED_list, P_ned_list, phi, theta, psi, v_NED
+    return (time_list, vNED_list, P_ned_list,
+            phi_list, theta_list, psi_list,
+            p_list, q_list, r_list,
+            u_body_list, v_body_list, w_body_list)
 
 def angle_2_quaternion(R_ned_to_body):
     qs = np.sqrt(0.25 * (R_ned_to_body[0,0] + R_ned_to_body[1,1] + R_ned_to_body[2,2] + 1))
