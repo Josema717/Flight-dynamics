@@ -419,3 +419,22 @@ FodyWeavers.xsd
 app.py
 check_climb.py
 check.py
+
+# ── 3-layer architecture ───────────────────────────────────────────────
+# Intermediate / temp files — always regenerated, never committed
+.tmp/
+!.tmp/.gitkeep
+
+# Secrets — copy .env.example → .env and fill in values
+.env
+
+# Google OAuth tokens
+credentials.json
+token.json
+AGENTS.md
+.env.example
+flight_dynamics_visualization.md
+README.md
+export_trajectory.py
+run_visualization.py
+validate_csv.py
