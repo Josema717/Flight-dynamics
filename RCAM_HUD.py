@@ -176,133 +176,6 @@ class Plot3DWidget(QWidget):
             px, py = self.project(x, y, z, cx, cy, scale)
             painter.drawEllipse(QPointF(px, py), 4, 4)
 
-class Trajectory3DWidget(QWidget):
-    def __init__(self, title="3D Trajectory"):
-        super().__init__()
-        self.title = title
-        self.Pn, self.Pe, self.Alt = [], [], []
-        self.time_list = []
-        self.current_idx = 0
-        
-        self.elev = 25.0
-        self.azim = -60.0
-        self.last_mouse_pos = None
-        self.setMinimumHeight(450)
-        self.setMouseTracking(True)
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
-        painter.fillRect(0, 0, w, h, QColor('#0d1117'))
-        
-        cx, cy = w/2, h/2
-        n = len(self.Pn)
-        if n < 1: return
-        
-        extent = max(5.0, np.max(np.abs(self.Pn)), np.max(np.abs(self.Pe)), np.max(np.abs(self.Alt)))
-        scale = min(w, h) / (extent * 2.5)
-
-        def project(x, y, z):
-            ae = np.deg2rad(self.elev)
-            az = np.deg2rad(self.azim)
-            x1 = x * np.cos(az) + y * np.sin(az)
-            y1 = -x * np.sin(az) + y * np.cos(az)
-            xp = y1
-            yp = -x1 * np.sin(ae) - z * np.cos(ae)
-            return cx + xp * scale, cy + yp * scale
-
-        z0 = 0.0
-        painter.setPen(QPen(QColor('#161b22'), 1))
-        for d in [5, 10, 20]:
-            poly = QPolygonF()
-            for deg in range(0, 361, 10):
-                gx, gy = d * np.cos(np.deg2rad(deg)), d * np.sin(np.deg2rad(deg))
-                px, py = project(gx, gy, z0)
-                poly.append(QPointF(px, py))
-            painter.drawPolyline(poly)
-
-        painter.setPen(QPen(QColor('#30363d')))
-        for axis, vec in [('N', (extent, 0, 0)), ('E', (0, extent, 0)), ('Alt', (0, 0, extent))]:
-            px, py = project(*vec)
-            painter.drawLine(int(cx), int(cy), int(px), int(py))
-            painter.drawText(int(px)+5, int(py)+5, axis)
-
-        painter.setPen(QPen(QColor('#58a6ff'), 1, Qt.PenStyle.DashLine))
-        shadow_poly = QPolygonF()
-        for i in range(n):
-            px, py = project(self.Pn[i], self.Pe[i], z0)
-            shadow_poly.append(QPointF(px, py))
-        painter.drawPolyline(shadow_poly)
-
-        def get_plasma_color(idx, total):
-            ratio = idx / max(1, total)
-            if ratio < 0.5:
-                r = int(120 + 135 * (ratio * 2))
-                b = int(255 * (1 - ratio * 2))
-                return QColor(r, 0, b)
-            else:
-                r = 255
-                g = int(255 * (ratio - 0.5) * 2)
-                return QColor(r, g, 0)
-
-        for i in range(n - 1):
-            p1 = project(self.Pn[i], self.Pe[i], self.Alt[i])
-            p2 = project(self.Pn[i+1], self.Pe[i+1], self.Alt[i+1])
-            painter.setPen(QPen(get_plasma_color(i, n), 3))
-            painter.drawLine(QPointF(*p1), QPointF(*p2))
-
-        start_px, start_py = project(self.Pn[0], self.Pe[0], self.Alt[0])
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor('#3fb950'))
-        painter.drawEllipse(QPointF(start_px, start_py), 5, 5)
-        painter.setPen(QColor('#3fb950'))
-        painter.drawText(int(start_px)+8, int(start_py), "Start")
-
-        curr_px, curr_py = project(self.Pn[-1], self.Pe[-1], self.Alt[-1])
-        ground_px, ground_py = project(self.Pn[-1], self.Pe[-1], z0)
-        
-        painter.setPen(QPen(QColor('#f85149'), 1, Qt.PenStyle.DotLine))
-        painter.drawLine(QPointF(curr_px, curr_py), QPointF(ground_px, ground_py))
-        
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor('#f85149'))
-        painter.drawEllipse(QPointF(curr_px, curr_py), 7, 7)
-        
-        painter.setPen(QColor('#f85149'))
-        painter.setFont(QFont("Monospace", 9))
-        t_now = self.time_list[self.current_idx] if self.time_list else 0.0
-        painter.drawText(int(curr_px)+10, int(curr_py), f"t={t_now:.1f}s")
-        
-        painter.setPen(QColor('#c9d1d9'))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        painter.drawText(20, 30, self.title)
-        painter.setFont(QFont("Segoe UI", 8))
-        painter.drawText(20, 50, "Drag to Rotate")
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.last_mouse_pos = event.pos()
-
-    def mouseMoveEvent(self, event):
-        if self.last_mouse_pos is not None:
-            delta = event.pos() - self.last_mouse_pos
-            self.azim += delta.x() * 0.5
-            self.elev -= delta.y() * 0.5
-            self.elev = max(-90.0, min(90.0, self.elev))
-            self.last_mouse_pos = event.pos()
-            self.update()
-
-    def mouseReleaseEvent(self, event):
-        self.last_mouse_pos = None
-
-    def update_trajectory(self, Pn, Pe, Alt, time_list, idx):
-        self.Pn = Pn
-        self.Pe = Pe
-        self.Alt = Alt
-        self.time_list = time_list
-        self.current_idx = idx
-        self.update()
 
 
 class Plot2DWidget(QWidget):
@@ -473,12 +346,6 @@ class RCAM_HUD_Interface(QMainWindow):
         self.ned_canvas = Plot3DWidget()
         self.plot_tabs.addTab(self.ned_canvas, "NED Frame")
         
-        self.traj3d_canvas = Trajectory3DWidget()
-        self.plot_tabs.addTab(self.traj3d_canvas, "3D Trajectory")
-        
-        self.traj2d_canvas = Plot2DWidget(title="2D Trajectory (East vs North)", xlabel="East", ylabel="North")
-        self.plot_tabs.addTab(self.traj2d_canvas, "2D Trajectory")
-        
         self.euler_canvas = TriplePlotCanvas("Roll (°)", "Pitch (°)", "Yaw (°)", "Time (s)", self)
         self.plot_tabs.addTab(self.euler_canvas, "Euler Angles")
         
@@ -625,9 +492,6 @@ class RCAM_HUD_Interface(QMainWindow):
             self.Va_list.append(Va)
             
         self.n_points = len(self.time_list)
-        self.Pn  = np.array([p[0] for p in self.P_ned_list])
-        self.Pe  = np.array([p[1] for p in self.P_ned_list])
-        self.Alt = np.array([p[2] for p in self.P_ned_list])
 
         self.slider.blockSignals(True)
         self.slider.setMaximum(self.n_points - 1)
@@ -691,11 +555,6 @@ class RCAM_HUD_Interface(QMainWindow):
         Pd       = -altitude                  
 
         text = (
-            f"Position (NED):\n"
-            f"Pn = {Pn:.1f} m\n"
-            f"Pe = {Pe:.1f} m\n"
-            f"Pd = {Pd:.1f} m (down)\n"
-            f"Alt = {altitude:.1f} m (up)\n\n"
             f"Velocity on the body:\n"
             f"u = {u:.2f} m/s\n"
             f"v = {v:.2f} m/s\n"
@@ -769,15 +628,7 @@ class RCAM_HUD_Interface(QMainWindow):
         self.vel_canvas.set_data(t_arr, [self.u_list, self.v_list, self.w_list], idx, '#3fb950', '#58a6ff', '#f85149')
         self.aero_canvas.set_data(t_arr, [self.alpha_list, self.beta_list, self.Va_list], idx, '#d29922', '#a371f7', '#58a6ff')
 
-        # 2D Trajectory
-        self.traj2d_canvas.lines = [(self.Pe[:idx+1], self.Pn[:idx+1], '#58a6ff')]
-        if idx > 0:
-            self.traj2d_canvas.scatter = [(self.Pe[idx], self.Pn[idx], '#f85149')]
-        self.traj2d_canvas.update()
 
-        # 3D Trajectory
-        if len(self.Pn) > 0:
-            self.traj3d_canvas.update_trajectory(self.Pn[:idx+1], self.Pe[:idx+1], self.Alt[:idx+1], self.time_list, idx)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
