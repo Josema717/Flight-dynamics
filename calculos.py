@@ -1,21 +1,63 @@
 import numpy as np
-import pprint
-import csv as csv
-#Convencion de NED: X norte, Y este, Z abajo
 
-#Inicializar variables
-alpha, beta, climb, u, v, w, p, q, r, phi, theta, psi = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-v_body = np.array([u, v, w]) # Velocidad en el sistema de referencia del body
+# ==========================================
+# 1. CONSTANTS FOR RCAM
+# ==========================================
+m = 120000.0  # kg
+c_mac = 6.6   # m
+lt = 24.8     # m
+S = 260.0     # m^2
+St = 64.0     # m^2
+g = 9.81      # m/s^2
 
-# La matriz de rotacion para cambiar del body al NED
+# Center of Gravity and Aerodynamic Center
+X_cg = 0.23 * c_mac
+Y_cg = 0.0
+Z_cg = 0.1 * c_mac
+r_cg = np.array([X_cg, Y_cg, Z_cg])
 
+X_ac = 0.12 * c_mac
+Y_ac = 0.0
+Z_ac = 0.0
+r_ac = np.array([X_ac, Y_ac, Z_ac])
+
+# Engine positions
+X_apt_1 = 0.0
+Y_apt_1 = -7.94
+Z_apt_1 = 1.9
+r_apt_1 = np.array([X_apt_1, Y_apt_1, Z_apt_1])
+
+X_apt_2 = 0.0
+Y_apt_2 = 7.94
+Z_apt_2 = 1.9
+r_apt_2 = np.array([X_apt_2, Y_apt_2, Z_apt_2])
+
+# Inertia
+Ixx = 40.07e6
+Iyy = 64.0e6
+Izz = 99.12e6
+Ixz = 2.79e6
+Ixy = 0.0
+Iyz = 0.0
+Ib = np.array([
+    [Ixx, -Ixy, -Ixz],
+    [-Ixy, Iyy, -Iyz],
+    [-Ixz, -Iyz, Izz]
+])
+invIb = np.linalg.inv(Ib)
+
+# ==========================================
+# 2. UTILITY FUNCTIONS (COMPATIBLE WITH HUD.PY)
+# ==========================================
 def rotation_matrix(phi, theta, psi, v_body):
+    """
+    HUD.py calls: R_body_to_NED, _, _, _, _ = rotation_matrix(phi, theta, psi, v_body)
+    Input phi, theta, psi are in DEGREES for compatibility with original code.
+    """
     phi_rad = np.radians(phi)
     theta_rad = np.radians(theta)
     psi_rad = np.radians(psi)
 
-    # Esta es la matriz transpuesta, ya que pensamos ir del body al NED.
-    
     R_z = np.array([[np.cos(psi_rad), np.sin(psi_rad), 0],
                     [-np.sin(psi_rad), np.cos(psi_rad), 0],
                     [0, 0, 1]])
@@ -25,81 +67,34 @@ def rotation_matrix(phi, theta, psi, v_body):
     R_x = np.array([[1, 0, 0],
                     [0, np.cos(phi_rad), np.sin(phi_rad)],
                     [0, -np.sin(phi_rad), np.cos(phi_rad)]])
-    R_zyx = R_z @ R_y @ R_x # Del NED al body
-    R_body_to_NED = R_zyx.T # Transpuesta para ir del body al NED
+    
+    R_NED_to_body = R_x @ R_y @ R_z
+    R_body_to_NED = R_NED_to_body.T
     v_NED = R_body_to_NED @ v_body
     return R_body_to_NED, v_NED, phi, theta, psi
 
-R_body_to_NED, v_NED, phi, theta, psi = rotation_matrix(phi, theta, psi, v_body)
-
-# AERODYNAMIC ANGLES
-
 def angle_of_attack(u, w):
-    """
-    Alpha (α) — Angle of Attack [deg]
-    Angle between the velocity vector projected on the XZ body plane and
-    the body X-axis. Defined as atan2(w, u).
-    """
     if abs(u) < 1e-3 and abs(w) < 1e-3:
         return 0.0
     alpha = np.rad2deg(np.arctan2(w, u))
     return alpha
 
-alpha = angle_of_attack(u, w)
-
 def sideslip_angle(u, v, w):
-    """
-    Beta (β) — Sideslip Angle [deg]
-    Angle between the total velocity vector and the body XZ plane.
-    Defined as atan2(v, sqrt(u²+w²)) or equivalently asin(v/V).
-    """
     V = np.sqrt(u**2 + v**2 + w**2)
     if V < 1e-3:
         return 0.0
     return np.rad2deg(np.arcsin(v/V))
 
-
 def climb_angle(v_NED):
-    """
-    Gamma (γ) — Climb Angle [deg]
-    Relationship: pitch = alpha + gamma  →  gamma = pitch - alpha
-    Valid when sideslip is zero (wings-level flight).
-    """
-    vx = v_NED[0]
-    vy = v_NED[1]
-    vz = -v_NED[2]
-
+    vx, vy, vz = v_NED[0], v_NED[1], v_NED[2]
     return np.rad2deg(np.arctan2(-vz, np.sqrt(vx**2 + vy**2)))
-
-
-#Este coso que dio el profe, todavia no entiendo para que sirve, pero lo dejo por las dudas.
-def aircraft_state(alpha, beta, climb ,u, v, w, p, q, r, phi, theta, psi, v_body, v_NED=v_NED):
-    "Returns aircraft state values in a structured format"
-    state_values = {
-        "angles": {
-            "alpha": float(alpha), #Angle of attack [deg]
-            "beta": float(beta),   #Sideslip angle [deg]
-            "gamma": float(climb), #Climb angle [deg]
-        },
-        "velocities_body": np.array([u, v, w]), #Velocities in body frame [m/s]
-        "velocities_ned": v_NED,  #Velocities in NED frame [m/s]
-        "angular_rates": np.array([p, q, r]),   #Angular rates in body frame [rad/s]
-        "attitude": np.array([phi, theta, psi]), #Euler angles: roll, pitch, yaw [deg]
-    }
-    return state_values
-
-estado = aircraft_state(alpha=angle_of_attack(u,w), beta=sideslip_angle(u,v,w), climb=climb_angle(v_NED), u=u, v=v, w=w, p=p, q=q, r=r, phi=phi, theta=theta, psi=psi, v_body=v_body)
-pprint.pprint(estado)
 
 def angular_rates_to_euler(p, q, r, phi, theta):
     phi_rad = np.radians(phi)
     theta_rad = np.radians(theta)
-
-    # Matriz de transformación de angular rates a Euler rates
     H = np.array([[1, np.sin(phi_rad)*np.tan(theta_rad), np.cos(phi_rad)*np.tan(theta_rad)],
                   [0, np.cos(phi_rad), -np.sin(phi_rad)],
                   [0, np.sin(phi_rad)/np.cos(theta_rad), np.cos(phi_rad)/np.cos(theta_rad)]])
-    
     angular_rates = np.array([p, q, r])
     euler_rates = H @ angular_rates
     return euler_rates
@@ -112,66 +107,58 @@ x,y,z = 0, 0, 0 # Inicializar posiciones en el NED
 phi, theta, psi = 0, 0, 0 # Inicializar ángulos de Euler
 
 
+# ==========================================
+# 3. IMU INTEGRATION (FOR CSV FILE)
+# ==========================================
 def integrate_imu_data(imu):
-    u,v,w = 0, 0, 0 # Inicializar velocidades en el body
-    x,y,z = 0, 0, 0 # Inicializar posiciones en el NED
-    vx,vy,vz = 0,0,0 # Inicializar velocidades en el NED
-    phi, theta, psi = 0, 0, 0 # Inicializar ángulos de Euler localmente
-    #listas para guardar los datos para graficar
+    u,v,w = 0, 0, 0
+    x,y,z = 0, 0, 0
+    vx,vy,vz = 0,0,0
+    phi, theta, psi = 0, 0, 0
+    
     time_list, u_list, v_list, w_list, x_list, y_list, z_list, phi_list, theta_list, psi_list = [], [], [], [], [], [], [], [], [], []
     vNED_list = []
     P_ned_list = []
     p_list, q_list, r_list = [], [], []
     u_body_list, v_body_list, w_body_list = [], [], []
-    # Body-frame velocity accumulators (gravity removed in body frame, like check.py)
+    
     u_b, v_b, w_b = 0.0, 0.0, 0.0
+    
     for i in range(1, len(imu)):
         row = imu[i]
         row_prev = imu[i-1]
-        dt = float(row["time_s"]) - float(row_prev["time_s"]) # Paso en segundos entre dos filas consecutivas
+        dt = float(row["time_s"]) - float(row_prev["time_s"])
 
-    # Crear el vector omega de velocidad angular para el body
         p = float(row["gyro_p_rad_s"])
         q = float(row["gyro_q_rad_s"])
         r = float(row["gyro_r_rad_s"])
-        omega_body = np.array([p, q, r]) # Velocidad angular en el sistema de referencia del body
         
-        #Integral para los ángulos de Euler
         euler_rates = angular_rates_to_euler(p, q, r, phi, theta)
         phi += np.rad2deg(euler_rates[0] * dt)
         theta += np.rad2deg(euler_rates[1] * dt)
         psi += np.rad2deg(euler_rates[2] * dt)
-        R_body_to_NED, _, _, _, _ = rotation_matrix(phi, theta, psi, v_body)
+        R_body_to_NED, _, _, _, _ = rotation_matrix(phi, theta, psi, np.array([0,0,0]))
 
-        # Crear el vector de aceleracion en el body
         u_dot = float(row["accel_x_m_s2"])
         v_dot = float(row["accel_y_m_s2"])
-        w_dot = float(row["accel_z_m_s2"]) + 9.81  # Remove gravity in body frame (accel_z ≈ -9.81 level → w_dot ≈ 0)
+        w_dot = float(row["accel_z_m_s2"]) + 9.81  # Remove gravity
+        
         a_body = np.array([u_dot, v_dot, w_dot])
-
-        # Body-frame velocity integration (clean, no gravity drift)
         u_b += u_dot * dt
         v_b += v_dot * dt
         w_b += w_dot * dt
 
-        a_ned = R_body_to_NED @ a_body # Transformar la aceleración del body al NED
-        # a_body already has gravity removed in body frame; rotating to NED gives
-        # the true NED acceleration directly (no further gravity subtraction needed).
-        
-        # Integrar aceleraciones para obtener velocidades en NED
+        a_ned = R_body_to_NED @ a_body
         vx += a_ned[0] * dt
         vy += a_ned[1] * dt
         vz += a_ned[2] * dt
-        v_NED = np.array([vx, vy, vz]) # Velocidad actual en el NED
-        #Integral para la posicion en el NED
-        # Integrar velocidades para obtener posición (acumular)
+        v_NED = np.array([vx, vy, vz])
+        
         x += v_NED[0] * dt
         y += v_NED[1] * dt
         z += v_NED[2] * dt * -1 # El eje Z del NED apunta hacia abajo
         P_ned = np.array([x, y, z])
 
-    
-        #Guardar los datos para graficar
         time_list.append(float(imu[i]["time_s"]))
         u_list.append(vx); v_list.append(vy); w_list.append(vz)
         x_list.append(P_ned[0]); y_list.append(P_ned[1]); z_list.append(P_ned[2])
@@ -179,7 +166,7 @@ def integrate_imu_data(imu):
         vNED_list.append(v_NED.copy())
         P_ned_list.append(P_ned.copy())
         p_list.append(p); q_list.append(q); r_list.append(r)
-        # Body-frame velocities from direct body integration (w ≈ 0 during level flight)
+        
         u_body_list.append(u_b)
         v_body_list.append(v_b)
         w_body_list.append(w_b)
@@ -189,13 +176,15 @@ def integrate_imu_data(imu):
             p_list, q_list, r_list,
             u_body_list, v_body_list, w_body_list)
 
-def angle_2_quaternion(R_ned_to_body):
-    qs = np.sqrt(0.25 * (R_ned_to_body[0,0] + R_ned_to_body[1,1] + R_ned_to_body[2,2] + 1))
-    qx = np.sqrt(0.25 * (R_ned_to_body[0,0] - R_ned_to_body[1,1] - R_ned_to_body[2,2] + 1))
-    qy = np.sqrt(0.25 * (-R_ned_to_body[0,0] + R_ned_to_body[1,1] - R_ned_to_body[2,2] + 1))
-    qz = np.sqrt(0.25 * (-R_ned_to_body[0,0] - R_ned_to_body[1,1] + R_ned_to_body[2,2] + 1))
-    q = np.array([qs, qx, qy, qz])
-    return q
+# ==========================================
+# 4. RCAM MODEL
+# ==========================================
+def xdot(X, U):
+    u, v, w, p, q, r, phi, theta, psi = X
+    d_A, d_T, d_R, d_th1, d_th2 = U
+
+    V_body = np.array([u, v, w])
+    w_be = np.array([p, q, r])
     
 def quaternion_2_angle(q):
     theta = 2 * np.arccos(q[0])
