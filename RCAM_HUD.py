@@ -1,6 +1,5 @@
 import sys
 import numpy as np
-import csv
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QSlider, QLabel, QSplitter, QPushButton, QTabWidget, QComboBox)
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF
@@ -65,12 +64,10 @@ class BaseView(QWidget):
 
 class YawView(BaseView):
     def draw_custom(self, painter, cx, cy, w, h):
-        # ── CUSTOMIZE COLORS HERE ─────────────────────────────────────────
         NED_N_COLOR = '#58a6ff' # Blueish
         NED_E_COLOR = '#8b949e' # Gray
         BODY_X_COLOR = '#3fb950' # Green
         BODY_Y_COLOR = '#f85149' # Red
-        # ──────────────────────────────────────────────────────────────────
         scale = min(w, h) / 3.2
         painter.translate(cx, cy)
         draw_arrow(painter, 0, 0, 0, -scale, NED_N_COLOR, 'N', (-8, -15))
@@ -147,7 +144,6 @@ class Plot3DWidget(QWidget):
         x_rot = x * np.cos(az) + y * np.sin(az)
         y_rot = -x * np.sin(az) + y * np.cos(az)
         xp = y_rot
-        # Restoring standard NED mapping: positive Z moves visually DOWN
         yp = -x_rot * np.sin(el) + z * np.cos(el)
         return cx + xp * scale, cy + yp * scale
 
@@ -181,9 +177,6 @@ class Plot3DWidget(QWidget):
             painter.drawEllipse(QPointF(px, py), 4, 4)
 
 class Trajectory3DWidget(QWidget):
-    """Sleek PyQt-based 3D trajectory view.
-    Includes mouse-orbit rotation, plasma trail, ground shadows, and status labels.
-    """
     def __init__(self, title="3D Trajectory"):
         super().__init__()
         self.title = title
@@ -204,7 +197,6 @@ class Trajectory3DWidget(QWidget):
         painter.fillRect(0, 0, w, h, QColor('#0d1117'))
         
         cx, cy = w/2, h/2
-        # Auto-scaling logic
         n = len(self.Pn)
         if n < 1: return
         
@@ -212,25 +204,16 @@ class Trajectory3DWidget(QWidget):
         scale = min(w, h) / (extent * 2.5)
 
         def project(x, y, z):
-            """X=North, Y=East, Z=Down (NED RHR).
-            Elev=0, Azim=-90 looks towards North.
-            """
             ae = np.deg2rad(self.elev)
             az = np.deg2rad(self.azim)
-            # Standard 3D Rotation
             x1 = x * np.cos(az) + y * np.sin(az)
             y1 = -x * np.sin(az) + y * np.cos(az)
-            
             xp = y1
-            # "JUST FLIP THE AXIS": Inverting the vertical projection.
-            # Previously -x1*sin(ae) + z*cos(ae). Now we flip the z component.
             yp = -x1 * np.sin(ae) - z * np.cos(ae)
             return cx + xp * scale, cy + yp * scale
 
-        # Draw Ground Grid (X-Y plane shadow area)
         z0 = 0.0
         painter.setPen(QPen(QColor('#161b22'), 1))
-        # Draw some reference circles/lines on ground
         for d in [5, 10, 20]:
             poly = QPolygonF()
             for deg in range(0, 361, 10):
@@ -239,14 +222,12 @@ class Trajectory3DWidget(QWidget):
                 poly.append(QPointF(px, py))
             painter.drawPolyline(poly)
 
-        # Draw Axis Labels
         painter.setPen(QPen(QColor('#30363d')))
         for axis, vec in [('N', (extent, 0, 0)), ('E', (0, extent, 0)), ('Alt', (0, 0, extent))]:
             px, py = project(*vec)
             painter.drawLine(int(cx), int(cy), int(px), int(py))
             painter.drawText(int(px)+5, int(py)+5, axis)
 
-        # Draw Ground Shadow Path (Dashed blue)
         painter.setPen(QPen(QColor('#58a6ff'), 1, Qt.PenStyle.DashLine))
         shadow_poly = QPolygonF()
         for i in range(n):
@@ -254,12 +235,8 @@ class Trajectory3DWidget(QWidget):
             shadow_poly.append(QPointF(px, py))
         painter.drawPolyline(shadow_poly)
 
-        # Draw Trajectory Gradient Path (Plasma Trail)
-        # We draw segment by segment to change colors
         def get_plasma_color(idx, total):
-            """EDIT THIS FUNCTION TO CHANGE TRAIL COLORS"""
             ratio = idx / max(1, total)
-            # Simple plasma-like gradient: Purple(0) -> Red(0.5) -> Yellow(1)
             if ratio < 0.5:
                 r = int(120 + 135 * (ratio * 2))
                 b = int(255 * (1 - ratio * 2))
@@ -275,7 +252,6 @@ class Trajectory3DWidget(QWidget):
             painter.setPen(QPen(get_plasma_color(i, n), 3))
             painter.drawLine(QPointF(*p1), QPointF(*p2))
 
-        # Start Marker (Green)
         start_px, start_py = project(self.Pn[0], self.Pe[0], self.Alt[0])
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor('#3fb950'))
@@ -283,20 +259,16 @@ class Trajectory3DWidget(QWidget):
         painter.setPen(QColor('#3fb950'))
         painter.drawText(int(start_px)+8, int(start_py), "Start")
 
-        # Current Marker (Red) + Drop Line
         curr_px, curr_py = project(self.Pn[-1], self.Pe[-1], self.Alt[-1])
         ground_px, ground_py = project(self.Pn[-1], self.Pe[-1], z0)
         
-        # Vertical Drop Line
         painter.setPen(QPen(QColor('#f85149'), 1, Qt.PenStyle.DotLine))
         painter.drawLine(QPointF(curr_px, curr_py), QPointF(ground_px, ground_py))
         
-        # Red Sphere
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor('#f85149'))
         painter.drawEllipse(QPointF(curr_px, curr_py), 7, 7)
         
-        # Info Text
         painter.setPen(QColor('#f85149'))
         painter.setFont(QFont("Monospace", 9))
         t_now = self.time_list[self.current_idx] if self.time_list else 0.0
@@ -341,14 +313,13 @@ class Plot2DWidget(QWidget):
         self.ylabel = ylabel
         self.lines = []
         self.scatter = []
-        self.setMinimumHeight(180) # Prevent collapsing
+        self.setMinimumHeight(180)
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
         
-        # Professional Dark Theme Palette
         BG_COLOR     = QColor('#0d1117')
         GRID_COLOR   = QColor('#21262d')
         AXIS_COLOR   = QColor('#8b949e')
@@ -356,7 +327,6 @@ class Plot2DWidget(QWidget):
         
         painter.fillRect(0, 0, w, h, BG_COLOR)
         
-        # Responsive Padding (Relative to window size)
         pad_l = max(65, int(w * 0.08))
         pad_r = max(20, int(w * 0.03))
         pad_t = max(40, int(h * 0.12))
@@ -385,14 +355,13 @@ class Plot2DWidget(QWidget):
         if x_max == x_min: x_max, x_min = x_min + 1, x_min - 1
         if y_max == y_min: y_max, y_min = y_min + 1, y_min - 1
         
-        # Ensure a minimum range for stability
         min_y_range = 10.0 if "°" in self.ylabel else 0.5
         if (y_max - y_min) < min_y_range:
             mid = (y_max + y_min) / 2
             y_max = mid + min_y_range / 2
             y_min = mid - min_y_range / 2
 
-        dy = (y_max - y_min) * 0.30 # Generous 30% padding
+        dy = (y_max - y_min) * 0.30 
         y_min -= dy
         y_max += dy
         
@@ -401,49 +370,40 @@ class Plot2DWidget(QWidget):
             py = h - pad_b - (y - y_min) / (y_max - y_min) * plot_h
             return QPointF(px, py)
 
-        # Draw Grid & Ticks
         painter.setPen(QPen(GRID_COLOR, 1, Qt.PenStyle.DashLine))
         
-        # Dynamic Font Sizing
         base_font_size = max(7, min(10, int(h / 60)))
         font = QFont("Segoe UI", base_font_size)
         painter.setFont(font)
         
         for i in range(5):
-            # Horizontal lines
             y_val = y_min + i * (y_max - y_min) / 4
             p1 = to_px(x_min, y_val)
             p2 = to_px(x_max, y_val)
             painter.drawLine(int(p1.x()), int(p1.y()), int(p2.x()), int(p1.y()))
             painter.setPen(QPen(AXIS_COLOR))
-            # Offset labels properly
             painter.drawText(QRectF(0, p1.y() - 10, pad_l - 8, 20), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{y_val:.1f}")
             painter.setPen(QPen(GRID_COLOR, 1, Qt.PenStyle.DashLine))
 
-        # Main Axes
         painter.setPen(QPen(AXIS_COLOR, 2))
         painter.drawLine(pad_l, pad_t, pad_l, h-pad_b)
         painter.drawLine(pad_l, h-pad_b, w-pad_r, h-pad_b)
 
-        # Data Lines
         for x_data, y_data, color in self.lines:
             if len(x_data) < 2: continue
             painter.setPen(QPen(QColor(color), 2, Qt.PenStyle.SolidLine))
             poly = QPolygonF()
             for x, y in zip(x_data, y_data):
                 px_pt = to_px(x, y)
-                # Keep points inside plot area visually
                 poly.append(px_pt)
             painter.drawPolyline(poly)
             
-        # Current Samples
         for x, y, color in self.scatter:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(color))
             pt = to_px(x, y)
             painter.drawEllipse(pt, 5, 5)
             
-        # Labels (Scaled)
         title_font_size = max(9, min(12, int(h / 45)))
         painter.setPen(QPen(TEXT_COLOR))
         painter.setFont(QFont("Segoe UI", title_font_size, QFont.Weight.Bold))
@@ -482,14 +442,12 @@ class TriplePlotCanvas(QWidget):
         self.p2.update()
         self.p3.update()
 
-class HUDInterface(QMainWindow):
-    def __init__(self, csv_file="tello_imu_example.csv"):
+class RCAM_HUD_Interface(QMainWindow):
+    def __init__(self):
         super().__init__()
-        self.setWindowTitle("HUD Viewer - RCAM")
-        self.resize(1200, 800)
-        self.csv_file = csv_file
+        self.setWindowTitle("RCAM HUD & Dynamic Modes Analyzer")
+        self.resize(1200, 850)
         
-        # UI Setup
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
@@ -526,6 +484,13 @@ class HUDInterface(QMainWindow):
         
         self.rates_canvas = TriplePlotCanvas("p (rad/s)", "q (rad/s)", "r (rad/s)", "Time (s)", self)
         self.plot_tabs.addTab(self.rates_canvas, "Angular Rates")
+        
+        # New RCAM-specific tabs
+        self.vel_canvas = TriplePlotCanvas("u (m/s)", "v (m/s)", "w (m/s)", "Time (s)", self)
+        self.plot_tabs.addTab(self.vel_canvas, "Body Velocities")
+        
+        self.aero_canvas = TriplePlotCanvas("Alpha (°)", "Beta (°)", "Va (m/s)", "Time (s)", self)
+        self.plot_tabs.addTab(self.aero_canvas, "Aero Angles")
 
         top_widget.setMinimumHeight(280)
         splitter.addWidget(top_widget)
@@ -537,7 +502,6 @@ class HUDInterface(QMainWindow):
         
         self.combo_scenario = QComboBox()
         self.combo_scenario.addItems([
-            "0: Drone IMU CSV Data",
             "1: RCAM Nominal Simulation",
             "2: RCAM Aileron Deflection (+5°)",
             "3: RCAM Engine 1 Shutdown",
@@ -567,7 +531,6 @@ class HUDInterface(QMainWindow):
         self.current_idx = 0
         self.is_playing = False
         
-        # Apply Professional Dark Theme QSS
         self.setStyleSheet("""
             QMainWindow, QWidget#centralWidget {
                 background-color: #0d1117;
@@ -619,8 +582,7 @@ class HUDInterface(QMainWindow):
             }
         """)
         
-        
-        splitter.setSizes([400, 400]) # Equal distribution or adjust as needed
+        splitter.setSizes([400, 400])
         self.load_simulation_data(0)
 
     def on_scenario_changed(self, index):
@@ -630,18 +592,11 @@ class HUDInterface(QMainWindow):
         if self.is_playing:
             self.toggle_play()
 
-        if scenario_index == 0:
-            # Load CSV
-            with open(self.csv_file, 'r', newline='', encoding='utf-8') as f:
-                imu = list(csv.DictReader(f))
-            t0 = float(imu[0]["time_s"])
-            (time_l, vNED_l, Pned_l, phi_l, theta_l, psi_l, p_l, q_l, r_l, u_l, v_l, w_l) = calculos.integrate_imu_data(imu)
-        else:
-            # Run RCAM simulation
-            t0 = 0.0
-            (time_l, vNED_l, Pned_l, phi_l, theta_l, psi_l, p_l, q_l, r_l, u_l, v_l, w_l) = calculos.run_rcam_scenario(scenario_index)
+        # ComboBox items: 0->Nominal(1), 1->Aileron(2), 2->Engine(3), 3->PSO(4)
+        rcam_scenario_id = scenario_index + 1
+        t0 = 0.0
+        (time_l, vNED_l, Pned_l, phi_l, theta_l, psi_l, p_l, q_l, r_l, u_l, v_l, w_l) = calculos.run_rcam_scenario(rcam_scenario_id)
 
-        # Prepend initial state
         _z = np.array([0., 0., 0.])
         self.time_list  = [t0]   + time_l
         self.phi_list   = [0.0]  + phi_l
@@ -652,9 +607,22 @@ class HUDInterface(QMainWindow):
         self.r_list     = [0.0]  + r_l
         self.v_NED_list = [_z.copy()] + vNED_l
         self.P_ned_list = [_z.copy()] + Pned_l
-        self.u_list     = [0.0]  + u_l
-        self.v_list     = [0.0]  + v_l
-        self.w_list     = [0.0]  + w_l
+        
+        u0, v0, w0 = (u_l[0], v_l[0], w_l[0]) if len(u_l) > 0 else (0.0, 0.0, 0.0)
+        self.u_list     = [u0]  + u_l
+        self.v_list     = [v0]  + v_l
+        self.w_list     = [w0]  + w_l
+        
+        # Calculate full aero histories
+        self.alpha_list = []
+        self.beta_list = []
+        self.Va_list = []
+        
+        for u, v, w in zip(self.u_list, self.v_list, self.w_list):
+            self.alpha_list.append(calculos.angle_of_attack(u, w))
+            self.beta_list.append(calculos.sideslip_angle(u, v, w))
+            Va = np.sqrt(u**2 + v**2 + w**2)
+            self.Va_list.append(Va)
             
         self.n_points = len(self.time_list)
         self.Pn  = np.array([p[0] for p in self.P_ned_list])
@@ -713,15 +681,14 @@ class HUDInterface(QMainWindow):
         
         self.info_label.setText(f"Time: {self.time_list[idx]:.2f}s")
         
-        alpha = calculos.angle_of_attack(u, w)
-        beta = calculos.sideslip_angle(u, v, w)
+        alpha = self.alpha_list[idx]
+        beta = self.beta_list[idx]
         climb = calculos.climb_angle(v_NED=v_NED)
         
         Pn       = self.P_ned_list[idx][0]
         Pe       = self.P_ned_list[idx][1]
-        # calculos stores z as altitude (positive-up); Pd is its negative
-        altitude = self.P_ned_list[idx][2]   # positive when above ground
-        Pd       = -altitude                  # NED down-positive (negative when above ground)
+        altitude = self.P_ned_list[idx][2]   
+        Pd       = -altitude                  
 
         text = (
             f"Position (NED):\n"
@@ -778,9 +745,6 @@ class HUDInterface(QMainWindow):
         ]).T
         
         pts_ned = R_body_to_NED @ pts_body * body_scale
-        # In our projection, positive Z goes DOWN visually.
-        # R_body_to_NED gives NED coords where Z_NED is positive DOWN.
-        # Negate Z so that nose-up (negative NED-Z) renders above center.
         pts_ned[2, :] = -pts_ned[2, :]
         
         def map_ned(pts_ned, indices):
@@ -795,27 +759,28 @@ class HUDInterface(QMainWindow):
         self.ned_canvas.texts = texts3d
         self.ned_canvas.update()
 
-        # ── 3-D trajectory (PyQt logic) ───────────────────────────────────
-        # Use Pd (NED-Down) to follow Right Hand Rule logic in Trajectory3DWidget.
-        # Negative Pd values (climbing) will be projected UP in the view.
-        self.traj3d_canvas.update_trajectory(
-            self.Pn[:idx+1], self.Pe[:idx+1], -self.Alt[:idx+1],
-            self.time_list, idx
-        )
+        # Update Triple Plots
+        t_arr = self.time_list
+        
+        self.euler_canvas.set_data(t_arr, [self.phi_list, self.theta_list, self.psi_list], idx, '#58a6ff', '#3fb950', '#d29922')
+        self.rates_canvas.set_data(t_arr, [self.p_list, self.q_list, self.r_list], idx, '#f85149', '#a371f7', '#3fb950')
+        
+        # New RCAM plots
+        self.vel_canvas.set_data(t_arr, [self.u_list, self.v_list, self.w_list], idx, '#3fb950', '#58a6ff', '#f85149')
+        self.aero_canvas.set_data(t_arr, [self.alpha_list, self.beta_list, self.Va_list], idx, '#d29922', '#a371f7', '#58a6ff')
 
-        self.traj2d_canvas.lines = [(self.Pe[:idx+1], self.Pn[:idx+1], 'green')]
+        # 2D Trajectory
+        self.traj2d_canvas.lines = [(self.Pe[:idx+1], self.Pn[:idx+1], '#58a6ff')]
         if idx > 0:
-            self.traj2d_canvas.scatter = [(self.Pe[idx], self.Pn[idx], 'red')]
-        else:
-            self.traj2d_canvas.scatter = []
+            self.traj2d_canvas.scatter = [(self.Pe[idx], self.Pn[idx], '#f85149')]
         self.traj2d_canvas.update()
-# Aqui se cambian los colores de las graficas
-        self.euler_canvas.set_data(self.time_list, [self.phi_list, self.theta_list, self.psi_list], idx, 'magenta', 'cyan', 'orange')
-        self.rates_canvas.set_data(self.time_list, [self.p_list, self.q_list, self.r_list], idx, 'red', 'green', 'blue')
 
-if __name__ == '__main__':
+        # 3D Trajectory
+        if len(self.Pn) > 0:
+            self.traj3d_canvas.update_trajectory(self.Pn[:idx+1], self.Pe[:idx+1], self.Alt[:idx+1], self.time_list, idx)
+
+if __name__ == "__main__":
     app = QApplication(sys.argv)
-    csv_file = "tello_imu_example.csv"
-    window = HUDInterface(csv_file)
+    window = RCAM_HUD_Interface()
     window.show()
     sys.exit(app.exec())
