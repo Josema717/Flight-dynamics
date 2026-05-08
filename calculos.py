@@ -96,7 +96,16 @@ def angular_rates_to_euler(p, q, r, phi, theta):
                   [0, np.cos(phi_rad), -np.sin(phi_rad)],
                   [0, np.sin(phi_rad)/np.cos(theta_rad), np.cos(phi_rad)/np.cos(theta_rad)]])
     angular_rates = np.array([p, q, r])
-    return H @ angular_rates
+    euler_rates = H @ angular_rates
+    return euler_rates
+
+
+with open('tello_imu_example.csv', 'r', newline='',encoding='utf-8') as imu_raw:
+    imu = list(csv.DictReader(imu_raw))
+u,v,w = 0, 0, 0 # Inicializar velocidades en el body
+x,y,z = 0, 0, 0 # Inicializar posiciones en el NED
+phi, theta, psi = 0, 0, 0 # Inicializar ángulos de Euler
+
 
 # ==========================================
 # 3. IMU INTEGRATION (FOR CSV FILE)
@@ -177,233 +186,157 @@ def xdot(X, U):
     V_body = np.array([u, v, w])
     w_be = np.array([p, q, r])
     
-    Va = np.linalg.norm(V_body)
-    if Va < 1e-3: Va = 1e-3
+def quaternion_2_angle(q):
+    theta = 2 * np.arccos(q[0])
+    e = []
+    if abs(theta) < 1e-3:
+        return 0.0, np.array([0, 0, 0])
+    e[0] = q[1] / np.sin(theta/2)
+    e[1] = q[2] / np.sin(theta/2)
+    e[2] = q[3] / np.sin(theta/2)
+    return np.rad2deg(theta), e
 
-    alpha = np.arctan2(w, u)
-    beta = np.arcsin(v / Va)
-    Q = 0.5 * 1.225 * Va**2
 
-    alpha_lift_0 = -11.5 * np.pi/180
+def xdot(X, U):
+    # X = [x, y, z, phi, theta, psi, u, v, w, p, q, r]
+    # U = [delta_ailerons, delta_elevator, delta_rudder, delta_throttle_1, delta_throttle_2]
+    x_dot = np.zeros(12)
+    # Aquí iría la dinámica del sistema para calcular x_dot a partir de X y U
+    X = np.array([0]*12) # Iniciar el vector de estado con ceros para evitar errores de índice
+    U = np.array([0]*5)  # Iniciar el vector de control con ceros para evitar errores de índice
+    x1, x2, x3, x4, x5, x6, x7, x8, x9 = X[0], X[1], X[2], X[3], X[4], X[5], X[6], X[7], X[8] #u, v, w, p, q, r , phi, theta, psi
+    u1,u2,u3,u4,u5 = U[0], U[1], U[2], U[3], U[4] #delta_ailerons, delta_elevator, delta_rudder, delta_throttle_1, delta_throttle_2
+    
+    
+    Va = np.sqrt(x1**2 + x2**2 + x3**2)
+    alpha = np.atan2(x3, x1) if Va > 1e-3 else 0.0
+    beta = np.arcsin(x2 / Va) if Va > 1e-3 else 0.0
+    Q = 0.5 * 1.225 * Va**2 # Presión dinámica (ρ * V² / 2)
+    w_be = np.array([x7, x8, x9]).T # Velocidad angular en el body
+    V_body = np.array([x1, x2, x3]).T # Velocidad en el sistema de referencia del body
+
+    # Calculo del Cl del ala y el cuerpo
     n = 5.5
-    if alpha < 14.5 * np.pi/180:
-        Cl_wb = n * (alpha - alpha_lift_0)
+    alpha_lift_0 = -11.5 * np.pi/180
+    a0 = 15.212
+    a1 = -155.2
+    a2 = 609.2
+    a3 = -768.5
+
+    if alpha < 14.5*np.pi/180:
+        Cl_wb = n*(alpha-alpha_lift_0)
     else:
-        a0 = 15.212
-        a1 = -155.2
-        a2 = 609.2
-        a3 = -768.5
         Cl_wb = a0 + a1*alpha + a2*alpha**2 + a3*alpha**3
 
-    depsilon_dalpha = 0.25
+    depsilon_dalpha = 0.25 # Esto salio del documento del RCAM
+    
+
+    p = np.poly1d([1, 0, 1])  # Representa x^2 + 1
+    derivada = p.deriv()      # Devuelve 2x
+    print(derivada(5))        # Evalúa la derivada en 5
+
     epsilon = depsilon_dalpha * (alpha - alpha_lift_0)
-    alpha_t = alpha - epsilon + d_T + 1.3 * q * lt / Va
-    Cl_t = 3.1 * (St/S) * alpha_t
+    lt = 24.8
+    alpha_t = alpha - epsilon + u2 + 1.3*x5*lt/Va
+    Cl_t = 3.1*St/S * alpha_t   # St es el área del estabilizador horizontal, S es el área del ala
+
     Cl = Cl_wb + Cl_t
 
-    Cd = 0.13 + 0.07 * (n * alpha + 0.654)**2
-    Cy = -1.6 * beta + 0.24 * d_R
+    #Total drag coefficient
+    Cd = 0.13 + 0.07(n*alpha+0.654)**2
 
-    Fas = Q * S * np.array([-Cd, Cy, -Cl])
-    R_s_to_body = np.array([
-        [np.cos(alpha), 0, -np.sin(alpha)],
-        [0, 1, 0],
-        [np.sin(alpha), 0, np.cos(alpha)]
-    ])
+    # Total side forces coefficient
+    Cy = -16*beta + 0.24*u3
+
+    #Rotate from Fs to Fw
+    C_s_to_w= np.array([[np.cos(beta), np.sin(beta), 0],
+                     [-np.sin(beta), np.cos(beta), 0],
+                     [0, 0, 1]])
+    CF_s = np.array([Cd, Cy, Cl]).T
+    CF_w = C_s_to_w @ CF_s
+
+    # Aerodynamic forces in body frame
+    Fas = Q* S * CF_s
+    R_s_to_body = np.array([[np.cos(alpha), 0, -np.sin(alpha)],
+                            [0, 1, 0], 
+                            [np.sin(alpha), 0, np.cos(alpha)]])
     Fab = R_s_to_body @ Fas
 
-    eta11 = -1.4 * beta
-    eta12 = -0.59 - 3.1 * (St * lt) / (S * c_mac) * (alpha - epsilon)
-    eta13 = (1 - alpha * 180 / (15 * np.pi)) * beta
-    eta = np.array([eta11, eta12, eta13])
+    # Nondimensional aero moment coefficient about the center of gravity in Fb
+    n_dash = np.array([-1.4*beta],
+                       [-0.59-3.1*St*lt*(alpha-epsilon)/Sl], 
+                       [(1-alpha*180/15*np.pi)*beta])
+    c_mac = c_mac ###Cuerda media aerodinámica
     
-    dcm_dx = (c_mac / Va) * np.array([
-        [-11.0, 0.0, 5.0],
-        [0.0, -4.03 * (St * lt**2) / (S * c_mac**2), 0.0],
-        [1.7, 0.0, -11.5]
-    ])
-    dcm_du = np.array([
-        [-0.6, 0.0, 0.22],
-        [0.0, -3.1 * (St * lt) / (S * c_mac), 0.0],
-        [0.0, 0.0, -0.63]
-    ])
-    
-    Cm_ac_b = eta + dcm_dx @ w_be + dcm_du @ np.array([d_A, d_T, d_R])
+    dcm_dx = c_mac / Va * np.array([[-11, 0, 5],
+                                    [0, -4.03*(St*lt**2)/(S*c_mac**2), 0],  
+                                    [1.7, 0, -11.5*beta]])
+    dcm_du = np.array([[-0.6, 0, 0.22],
+                    [0, -3.1*(St*lt)/(Sl*c_mac), 0],  
+                    [0, 0, -0.63]])
+
+    #The moments about the aerodynamic center in the body frame
+    Cm_ac_b = n_dash + dcm_dx @ np.array([x4, x5, x6]).T + dcm_du @ np.array([u1, u2, u3]).T
     M_a_ac_b = c_mac * Q * S * Cm_ac_b
-    Ma_cg_b = M_a_ac_b + np.cross(Fab, r_cg - r_ac)
-
-    F1 = d_th1 * m * g
-    F2 = d_th2 * m * g
-    F_prop_1 = np.array([F1, 0.0, 0.0])
-    F_prop_2 = np.array([F2, 0.0, 0.0])
-    F_prop_total = F_prop_1 + F_prop_2
     
-    r_eng1 = r_apt_1 - r_cg
-    r_eng2 = r_apt_2 - r_cg
-    M_engine_cg_1_body = np.cross(r_eng1, F_prop_1)
-    M_engine_cg_2_body = np.cross(r_eng2, F_prop_2)
-    M_total_engine_cg_b = M_engine_cg_1_body + M_engine_cg_2_body
+    r_cg = np.array([0.23*c_mac, 0, 0.1*c_mac]) # Vector desde el centro de gravedad al centro aerodinámico en el sistema de referencia del body
+    r_ac = np.array([0.12*c_mac, 0, 0])
 
-    F_gravity_ned = np.array([0, 0, m * g])
-    R_body_to_NED, _, _, _, _ = rotation_matrix(np.degrees(phi), np.degrees(theta), np.degrees(psi), V_body)
-    F_gravity_body = R_body_to_NED.T @ F_gravity_ned
+    Ma_cg_b = M_a_ac_b + np.cross(Fab, (r_cg - r_ac))
+    
+    #Propulsion effects
+    F1 = u4*m*g
+    F2 = u5*m*g   #m es la masa del avión, g es la gravedad
+    F_prop_1 = np.array([F1, 0, 0]) # Asumiendo que la fuerza de propulsión actúa en el eje X del body
+    F_prop_2 = np.array([F2, 0, 0]) # Asumiendo que la fuerza de propulsión actúa en el eje X del body
+    F_prop_total = F_prop_1 + F_prop_2
+
+    #Momentos que generan las fuerzas de propulsion en el centro de gravedad y en el eje de referencia del body
+    u_dash_1 = np.array([X_cg - X_apt_1],     #Posicion del primer motor en el eje del body
+                        [Y_apt_1 - Y_cg],
+                        [Z_eg - Z_apt_1])
+
+    u_dash_2 = np.array([X_cg - X_apt_2],     #Posicion del segundo motor en el eje del body
+                        [Y_apt_2 - Y_cg],
+                        [Z_eg - Z_apt_2])
+
+    M_engine_cg_1_body = np.cross(u_dash_1, F_prop_1)   # Momento generado por la fuerza de propulsion del primer motor respecto al centro de gravedad en el sistema de referencia del body
+    M_engine_cg_2_body = np.cross(u_dash_2, F_prop_2)   # Momento generado por la fuerza de propulsion del segundo motor respecto al centro de gravedad en el sistema de referencia del body
+
+    M_engine_cg = M_engine_cg   #Placeholder, tengo que buscar este valor en el documento del RCAM
+    M_total_engine_cg_b = M_engine_cg + M_engine_cg_1_body + M_engine_cg_2_body
+
+
+    # Grativy effects
+    F_gravity_ned = np.array([0, 0, m*g]) # Fuerza de gravedad en el sistema de referencia NED
+    R_body_to_NED = R_body_to_NED, _, _, _, _, _,  =rotation_matrix(phi=x7, theta=x8, psi=x9,v_body=np.array([x1, x2, x3])) # Matriz de rotación del body al NED
+    F_gravity_body = R_body_to_NED.T @ F_gravity_ned # Fuerza de gravedad en el sistema de referencia del body
+
+
+    # Explicit first order form
 
     F_total_body = Fab + F_prop_total + F_gravity_body
-    lineal_acceleration = (1.0 / m) * F_total_body - np.cross(w_be, V_body)
+    X1_dot, X2_dot, X3_dot, X4_dot, X5_dot, X6_dot, X7_dot, X8_dot, X9_dot = 0, 0, 0, 0, 0, 0, 0, 0, 0
 
-    M_cg = Ma_cg_b + M_total_engine_cg_b
-    rotational_acceleration = invIb @ (M_cg - np.cross(w_be, Ib @ w_be))
-
-    sin_phi, cos_phi = np.sin(phi), np.cos(phi)
-    tan_theta, cos_theta = np.tan(theta), np.cos(theta)
-    if np.abs(cos_theta) < 1e-4: cos_theta = 1e-4 * np.sign(cos_theta)
-        
-    H = np.array([
-        [1.0, sin_phi * tan_theta, cos_phi * tan_theta],
-        [0.0, cos_phi, -sin_phi],
-        [0.0, sin_phi / cos_theta, cos_phi / cos_theta]
-    ])
-    euler_rates = H @ w_be
-
-    X_dot = np.zeros(9)
-    X_dot[0:3] = lineal_acceleration
-    X_dot[3:6] = rotational_acceleration
-    X_dot[6:9] = euler_rates
-    return X_dot
-
-def pso_trim():
-    print("Corriendo PSO para encontrar Trimado...")
-    def cost(vars):
-        alpha, d_T, d_th = vars
-        u = 78.0 * np.cos(alpha)
-        w = 78.0 * np.sin(alpha)
-        X = np.array([u, 0.0, w, 0.0, 0.0, 0.0, 0.0, alpha, np.pi/4])
-        U = np.array([0.0, d_T, 0.0, d_th, d_th])
-        X_dot = xdot(X, U)
-        return X_dot[0]**2 + X_dot[2]**2 + X_dot[4]**2
-
-    n_particles = 30
-    n_iters = 100
-    dim = 3
-    bounds = np.array([[-0.2, 0.2], [-0.5, 0.5], [0.0, 1.0]])
-    X_pos = np.random.uniform(bounds[:,0], bounds[:,1], (n_particles, dim))
-    V = np.zeros((n_particles, dim))
     
-    pbest_pos = X_pos.copy()
-    pbest_cost = np.array([cost(p) for p in X_pos])
-    gbest_idx = np.argmin(pbest_cost)
-    gbest_pos = pbest_pos[gbest_idx].copy()
-    gbest_cost = pbest_cost[gbest_idx]
-    
-    w_weight, c1, c2 = 0.5, 1.5, 1.5
-    for i in range(n_iters):
-        r1, r2 = np.random.rand(n_particles, dim), np.random.rand(n_particles, dim)
-        V = w_weight * V + c1 * r1 * (pbest_pos - X_pos) + c2 * r2 * (gbest_pos - X_pos)
-        X_pos += V
-        X_pos = np.clip(X_pos, bounds[:,0], bounds[:,1])
-        costs = np.array([cost(p) for p in X_pos])
-        better_idx = costs < pbest_cost
-        pbest_cost[better_idx] = costs[better_idx]
-        pbest_pos[better_idx] = X_pos[better_idx]
-        if np.min(pbest_cost) < gbest_cost:
-            gbest_cost = np.min(pbest_cost)
-            gbest_pos = pbest_pos[np.argmin(pbest_cost)].copy()
+    lineal_acceleration = 1/m * F_total_body - np.cross(w_be, V_body) # Aceleración en el body frame (u_dot, v_dot, w_dot)
 
-    alpha, d_T, d_th = gbest_pos
-    u = 78.0 * np.cos(alpha)
-    w = 78.0 * np.sin(alpha)
-    X_trim = np.array([u, 0.0, w, 0.0, 0.0, 0.0, 0.0, alpha, np.pi/4])
-    U_trim = np.array([0.0, d_T, 0.0, d_th, d_th])
-    return X_trim, U_trim
+    X1_dot, X2_dot, X3_dot = lineal_acceleration[0], lineal_acceleration[1], lineal_acceleration[2] # Aceleraciones en el body frame (u_dot, v_dot, w_dot)
 
-def simulate(t_end, dt, X0, U_func):
-    N = int(t_end / dt) + 1
-    t = np.linspace(0, t_end, N)
-    X = np.zeros((N, 9))
-    X[0] = X0
-    for i in range(1, N):
-        U = U_func(t[i-1])
-        X_dot = xdot(X[i-1], U)
-        X[i] = X[i-1] + X_dot * dt
-    return t, X
 
-# ==========================================
-# 5. INTEGRATION ADAPTER FOR HUD.PY
-# ==========================================
-def run_rcam_scenario(scenario_id):
-    """
-    Returns the exact tuple that HUD.py expects:
-    (time_l, vNED_l, Pned_l, phi_l, theta_l, psi_l, p_l, q_l, r_l, u_l, v_l, w_l)
-    """
-    X0_nom = np.array([85.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.0])
-    U_nom = np.array([0.0, -0.1, 0.0, 0.08, 0.08])
-    dt = 1.0
-    t_end = 180.0
-    
-    if scenario_id == 1: # Nominal
-        t, X = simulate(t_end, dt, X0_nom, lambda t: U_nom)
-    elif scenario_id == 2: # Aileron Doublet
-        def U_aileron(time):
-            U = U_nom.copy()
-            if 30 <= time <= 32:
-                U[0] = np.radians(5)
-            return U
-        t, X = simulate(t_end, dt, X0_nom, U_aileron)
-    elif scenario_id == 3: # Engine 1 Shutdown
-        def U_engine(time):
-            U = U_nom.copy()
-            if time >= 30:
-                U[3] = 0.0
-            return U
-        t, X = simulate(t_end, dt, X0_nom, U_engine)
-    elif scenario_id == 4: # PSO Trim
-        X_trim, U_trim = pso_trim()
-        t, X = simulate(60.0, dt, X_trim, lambda t: U_trim)
-    else:
-        raise ValueError("Invalid scenario")
+    M_cg = Ma_cg_b + M_total_engine_cg_b # Momento total en el centro de gravedad en el sistema de referencia del body
+    Ib = np.array([[Ixx, Ixy, Ixz],
+                    [Iyx, Iyy, Iyz],
+                    [Izx, Izy, Izz]]) # Matriz de inercia del avión en el sistema de referencia del body, placeholder
 
-    # Format arrays for HUD.py
-    N = len(t)
-    vNED_list = []
-    Pned_list = []
     
-    # Init position
-    pos_ned = np.array([0.0, 0.0, 0.0])
-    
-    for i in range(N):
-        u, v, w = X[i, 0:3]
-        phi, theta, psi = np.degrees(X[i, 6:9])
-        v_body = np.array([u, v, w])
-        
-        R_body_to_NED, v_ned, _, _, _ = rotation_matrix(phi, theta, psi, v_body)
-        
-        # Integrate position (P_NED)
-        if i > 0:
-            pos_ned = pos_ned + v_ned * dt
-            
-        vNED_list.append(v_ned)
-        
-        # NOTE: calculos.py previously returned z as negative for altitude.
-        # But wait, looking at integrate_imu_data:
-        # z += v_NED[2] * dt * -1 # El eje Z del NED apunta hacia abajo
-        # Actually in HUD.py: 
-        # altitude = self.P_ned_list[idx][2]
-        # Pd = -altitude
-        # Meaning HUD expects P_ned[2] to be ALTITUDE (positive up).
-        # So we should store -pos_ned[2] in the 3rd component.
-        Pned_list.append(np.array([pos_ned[0], pos_ned[1], -pos_ned[2]]))
-        
-    return (
-        list(t),
-        vNED_list,
-        Pned_list,
-        list(np.degrees(X[:, 6])), # phi
-        list(np.degrees(X[:, 7])), # theta
-        list(np.degrees(X[:, 8])), # psi
-        list(X[:, 3]), # p
-        list(X[:, 4]), # q
-        list(X[:, 5]), # r
-        list(X[:, 0]), # u
-        list(X[:, 1]), # v
-        list(X[:, 2])  # w
-    )
+    rotational_acceleration = np.linalg.inv(Ib) @ (M_cg - np.cross(w_be, Ib @ w_be))
+
+    X4_dot, X5_dot, X6_dot = rotational_acceleration[0], rotational_acceleration[1], rotational_acceleration[2]
+
+
+    euler_rates = angular_rates_to_euler(x4, x5, x6, x8) # Euler rates (p, q, r)
+    X7_dot, X8_dot, X9_dot = euler_rates[0], euler_rates[1], euler_rates[2]
+    x_dot = np.array([X1_dot, X2_dot, X3_dot, X4_dot, X5_dot, X6_dot, X7_dot, X8_dot, X9_dot])
+
+    return x_dot
