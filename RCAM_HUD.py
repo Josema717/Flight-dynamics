@@ -134,6 +134,8 @@ class Plot3DWidget(QWidget):
         self.lines = []
         self.texts = []
         self.scatter = []
+        # polygons: list of (vertex_list [(x,y,z),...], fill_color_str, edge_color_str)
+        self.polygons = []
         self.elev = 30
         self.azim = 45
         self.axis_length = 10
@@ -147,7 +149,7 @@ class Plot3DWidget(QWidget):
             dx = event.position().x() - self.last_pos.x()
             dy = event.position().y() - self.last_pos.y()
             self.azim -= dx * 0.5
-            self.elev += dy * 0.5  # Positive dy means mouse moved down, which corresponds to looking from higher up
+            self.elev += dy * 0.5
             self.elev = max(-90, min(90, self.elev))
             self.last_pos = event.position()
             self.update()
@@ -161,16 +163,29 @@ class Plot3DWidget(QWidget):
         yp = -x_rot * np.sin(el) + z * np.cos(el)
         return cx + xp * scale, cy + yp * scale
 
+    def _poly_depth(self, verts):
+        """Approximate painter's-algorithm depth: mean projected Z of centroid."""
+        az = np.deg2rad(self.azim)
+        el = np.deg2rad(self.elev)
+        xs = np.mean([v[0] for v in verts])
+        ys = np.mean([v[1] for v in verts])
+        zs = np.mean([v[2] for v in verts])
+        x_rot = xs * np.cos(az) + ys * np.sin(az)
+        depth = x_rot * np.cos(el) - zs * np.sin(el)   # larger = farther
+        return depth
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
-        painter.fillRect(0, 0, w, h, QColor(255, 255, 255))
+        painter.fillRect(0, 0, w, h, QColor(30, 30, 40))  # dark background
+        painter.setPen(QPen(QColor('#c9d1d9')))
         painter.drawText(10, 20, self.title)
-        
-        cx, cy = w/2, h/2
+
+        cx, cy = w / 2, h / 2
         scale = min(w, h) / (2.5 * max(1, self.axis_length))
-        
+
+        # --- axis / reference lines ---
         for pts, color, width in self.lines:
             painter.setPen(QPen(QColor(color), width))
             poly = QPolygonF()
@@ -178,12 +193,29 @@ class Plot3DWidget(QWidget):
                 px, py = self.project(pt[0], pt[1], pt[2], cx, cy, scale)
                 poly.append(QPointF(px, py))
             painter.drawPolyline(poly)
-            
+
+        # --- filled surface polygons (depth-sorted back-to-front) ---
+        sorted_polys = sorted(self.polygons,
+                              key=lambda p: self._poly_depth(p[0]),
+                              reverse=True)   # paint farthest first
+        for verts, fill_color, edge_color in sorted_polys:
+            proj_pts = QPolygonF()
+            for v in verts:
+                px, py = self.project(v[0], v[1], v[2], cx, cy, scale)
+                proj_pts.append(QPointF(px, py))
+            fill_qc = QColor(fill_color)
+            edge_qc = QColor(edge_color)
+            painter.setBrush(fill_qc)
+            painter.setPen(QPen(edge_qc, 1))
+            painter.drawPolygon(proj_pts)
+
+        # --- labels ---
         for x, y, z, text, color in self.texts:
             painter.setPen(QPen(QColor(color)))
             px, py = self.project(x, y, z, cx, cy, scale)
             painter.drawText(QPointF(px, py), text)
 
+        # --- scatter dots ---
         for x, y, z, color in self.scatter:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(color))
@@ -395,6 +427,13 @@ class RCAM_HUD_Interface(QMainWindow):
         self.play_button.clicked.connect(self.toggle_play)
         ctrl_layout.addWidget(self.play_button)
 
+        ctrl_layout.addWidget(QLabel("Speed:"))
+        self.combo_speed = QComboBox()
+        self.combo_speed.addItems(["0.25×", "0.5×", "1×", "2×", "5×", "10×"])
+        self.combo_speed.setCurrentIndex(2)          # default: 1×
+        self.combo_speed.currentIndexChanged.connect(self.on_speed_changed)
+        ctrl_layout.addWidget(self.combo_speed)
+
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setMinimum(0)
         self.slider.setValue(0)
@@ -408,6 +447,7 @@ class RCAM_HUD_Interface(QMainWindow):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
         self.dt_ms = 33
+        self.speed_multiplier = 1.0
 
         self.current_idx = 0
         self.is_playing = False
@@ -527,31 +567,46 @@ class RCAM_HUD_Interface(QMainWindow):
         else:
             if self.current_idx >= self.n_points - 1:
                 self.slider.setValue(0)
+                self.current_idx = 0
+            
+            # Start tracking playback time from current index
+            self.current_time_s = self.time_list[self.current_idx]
             self.timer.start(self.dt_ms)
             self.play_button.setText("Pause")
             self.is_playing = True
 
+    def on_speed_changed(self, index):
+        speeds = [0.25, 0.5, 1.0, 2.0, 5.0, 10.0]
+        self.speed_multiplier = speeds[index]
+
     def on_slider_moved(self, value):
         self.current_idx = value
+        if hasattr(self, 'current_time_s'):
+            self.current_time_s = self.time_list[self.current_idx]
         self.update_plots()
 
     def update_frame(self):
-        if self.current_idx < self.n_points - 1:
-            step_diff = self.time_list[min(self.current_idx+1, self.n_points-1)] - self.time_list[self.current_idx]
-            if step_diff <= 0:
-                step_size = 1
-            else:
-                step_size = max(1, int(self.dt_ms / 1000.0 / step_diff))
-                step_size = min(step_size, 5)
+        if not self.is_playing:
+            return
+            
+        if not hasattr(self, 'current_time_s'):
+            self.current_time_s = self.time_list[self.current_idx]
+            
+        # Accumulate real elapsed time scaled by the multiplier
+        self.current_time_s += (self.dt_ms / 1000.0) * self.speed_multiplier
+        
+        # Fast-forward the index to match the accumulated time
+        while self.current_idx < self.n_points - 1 and self.time_list[self.current_idx + 1] <= self.current_time_s:
+            self.current_idx += 1
 
-            self.current_idx += step_size
-            self.current_idx = min(self.current_idx, self.n_points - 1)
-            self.slider.blockSignals(True)
-            self.slider.setValue(self.current_idx)
-            self.slider.blockSignals(False)
-            self.update_plots()
-        else:
+        if self.current_idx >= self.n_points - 1:
+            self.current_idx = self.n_points - 1
             self.toggle_play()
+
+        self.slider.blockSignals(True)
+        self.slider.setValue(self.current_idx)
+        self.slider.blockSignals(False)
+        self.update_plots()
 
     def update_plots(self):
         idx = self.current_idx
@@ -610,45 +665,90 @@ class RCAM_HUD_Interface(QMainWindow):
 
         axis_length = max(10, np.linalg.norm(v_NED) * 1.5)
         
+        # ── NED reference frame axes ──────────────────────────────────────
         lines3d = [
-            ([(0,0,0), (axis_length,0,0)], 'b', 1),
-            ([(0,0,0), (0,axis_length,0)], 'b', 1),
-            ([(0,0,0), (0,0,axis_length)], 'b', 1),
+            ([(0,0,0), (axis_length,0,0)], '#58a6ff', 1),
+            ([(0,0,0), (0,axis_length,0)], '#58a6ff', 1),
+            ([(0,0,0), (0,0,axis_length)], '#58a6ff', 1),
         ]
         texts3d = [
-            (axis_length+1, 0, 0, 'N', 'b'),
-            (0, axis_length+1, 0, 'E', 'b'),
-            (0, 0, axis_length+1, 'D', 'b')
+            (axis_length+1, 0, 0, 'N', '#58a6ff'),
+            (0, axis_length+1, 0, 'E', '#58a6ff'),
+            (0, 0, axis_length+1, 'D', '#58a6ff')
         ]
-        
-        if np.linalg.norm(v_NED) > 0.1:
-            lines3d.append(([(0,0,0), (v_NED[0], v_NED[1], v_NED[2])], 'r', 2))
-            texts3d.append((v_NED[0]+1, v_NED[1]+1, v_NED[2]+1, 'V', 'k'))
-            
-        R_body_to_NED, _, _, _, _ = calculos.rotation_matrix(phi, theta, psi, v_body)
-        
-        body_scale = axis_length * 0.4
-        pts_body = np.array([
-            [ 1.0,  0.0,  0.0],
-            [-1.0,  0.0,  0.0],
-            [-0.2,  1.0,  0.0],
-            [-0.2, -1.0,  0.0],
-            [-1.0,  0.0, -0.4],
-            [-1.0,  0.0,  0.0],
-        ]).T
-        
-        pts_ned = R_body_to_NED @ pts_body * body_scale
-        
-        def map_ned(pts_ned, indices):
-            return [(pts_ned[0,i], pts_ned[1,i], pts_ned[2,i]) for i in indices]
 
-        lines3d.append((map_ned(pts_ned, [0,1]), 'orange', 4))
-        lines3d.append((map_ned(pts_ned, [2,3]), 'orange', 4))
-        lines3d.append((map_ned(pts_ned, [4,5]), 'orange', 4))
-        
+        if np.linalg.norm(v_NED) > 0.1:
+            lines3d.append(([(0,0,0), (v_NED[0], v_NED[1], v_NED[2])], '#f85149', 2))
+            texts3d.append((v_NED[0]+1, v_NED[1]+1, v_NED[2]+1, 'V', '#f85149'))
+
+        R_body_to_NED, _, _, _, _ = calculos.rotation_matrix(phi, theta, psi, v_body)
+        body_scale = axis_length * 0.45
+
+        # ── Aircraft surface geometry (body frame, X=nose, Y=right, Z=down) ─
+        #
+        #  Fuselage: nose(1,0,0) → tail(-1,0,0)   -- kept as a line
+        #  Wings:    swept trapezoid, symmetric about XZ-plane
+        #    Root LE: ( 0.05, ±0.10, 0)  Root TE: (-0.45, ±0.10, 0)
+        #    Tip  LE: (-0.15, ±1.00, 0)  Tip  TE: (-0.40, ±1.00, 0)
+        #  Horizontal stabilizer (elevator) at tail:
+        #    Root LE: (-0.75, ±0.10, 0)  Root TE: (-1.00, ±0.10, 0)
+        #    Tip  LE: (-0.85, ±0.42, 0)  Tip  TE: (-1.00, ±0.42, 0)
+        #  Vertical stabilizer: in XZ-plane (Y=0), swept upward (Z-)
+        #    Base LE: (-0.75,  0,  0.00)  Base TE: (-1.00,  0,  0.00)
+        #    Tip  LE: (-0.80,  0, -0.38)  Tip  TE: (-1.00,  0, -0.38)
+
+        # helper: rotate & scale body-frame point → NED tuple
+        def pt_ned(bx, by, bz):
+            p = R_body_to_NED @ np.array([bx, by, bz]) * body_scale
+            return (p[0], p[1], p[2])
+
+        # Fuselage (line)
+        lines3d.append(([pt_ned(1.0, 0, 0), pt_ned(-1.0, 0, 0)], '#000000', 3))
+
+        # Wing surfaces – semi-transparent orange/amber fill
+        WING_FILL  = QColor(255, 165,  30, 200)   # warm amber, α=200
+        WING_EDGE  = '#ffb347'
+        HSTAB_FILL = QColor(100, 200, 255, 200)   # cool blue
+        HSTAB_EDGE = '#7ec8e3'
+        VSTAB_FILL = QColor(180, 120, 255, 200)   # purple
+        VSTAB_EDGE = '#c084fc'
+
+        polys3d = []
+
+        for sign in (+1, -1):           # right (+Y) and left (-Y) panels
+            # Main wing
+            polys3d.append((
+                [pt_ned( 0.05, sign*0.10, 0),
+                 pt_ned(-0.15, sign*1.00, 0),
+                 pt_ned(-0.40, sign*1.00, 0),
+                 pt_ned(-0.45, sign*0.10, 0)],
+                WING_FILL.name(QColor.NameFormat.HexArgb),
+                WING_EDGE
+            ))
+            # Horizontal stabilizer
+            polys3d.append((
+                [pt_ned(-0.75, sign*0.10, 0),
+                 pt_ned(-0.85, sign*0.42, 0),
+                 pt_ned(-1.00, sign*0.42, 0),
+                 pt_ned(-1.00, sign*0.10, 0)],
+                HSTAB_FILL.name(QColor.NameFormat.HexArgb),
+                HSTAB_EDGE
+            ))
+
+        # Vertical stabilizer (one panel, tilted upward = negative Z in body)
+        polys3d.append((
+            [pt_ned(-0.75,  0,  0.00),
+             pt_ned(-0.80,  0, -0.38),
+             pt_ned(-1.00,  0, -0.38),
+             pt_ned(-1.00,  0,  0.00)],
+            VSTAB_FILL.name(QColor.NameFormat.HexArgb),
+            VSTAB_EDGE
+        ))
+
         self.ned_canvas.axis_length = axis_length
-        self.ned_canvas.lines = lines3d
-        self.ned_canvas.texts = texts3d
+        self.ned_canvas.lines    = lines3d
+        self.ned_canvas.texts    = texts3d
+        self.ned_canvas.polygons = polys3d
         self.ned_canvas.update()
 
         # Update Triple Plots

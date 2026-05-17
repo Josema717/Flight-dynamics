@@ -89,7 +89,7 @@ def aircraft_state(alpha, beta, climb ,u, v, w, p, q, r, phi, theta, psi, v_body
     return state_values
 
 estado = aircraft_state(alpha=angle_of_attack(u,w), beta=sideslip_angle(u,v,w), climb=climb_angle(v_NED), u=u, v=v, w=w, p=p, q=q, r=r, phi=phi, theta=theta, psi=psi, v_body=v_body)
-pprint.pprint(estado)
+# pprint.pprint(estado)  # suppressed: would spam stdout on every HUD import
 
 def angular_rates_to_euler(p, q, r, phi, theta):
     phi_rad = np.radians(phi)
@@ -105,11 +105,14 @@ def angular_rates_to_euler(p, q, r, phi, theta):
     return euler_rates
 
 
-with open('tello_imu_example.csv', 'r', newline='',encoding='utf-8') as imu_raw:
-    imu = list(csv.DictReader(imu_raw))
-u,v,w = 0, 0, 0 # Inicializar velocidades en el body
-x,y,z = 0, 0, 0 # Inicializar posiciones en el NED
-phi, theta, psi = 0, 0, 0 # Inicializar ángulos de Euler
+try:
+    with open('tello_imu_example.csv', 'r', newline='', encoding='utf-8') as imu_raw:
+        imu = list(csv.DictReader(imu_raw))
+except FileNotFoundError:
+    imu = []   # CSV not present — IMU integration unavailable; RCAM scenarios still work
+u, v, w = 0, 0, 0
+x, y, z = 0, 0, 0
+phi, theta, psi = 0, 0, 0
 
 
 def integrate_imu_data(imu):
@@ -221,8 +224,6 @@ def xdot(X, U):
     u2 = max(np.radians(-25), min(np.radians(10), u2))  # Limitar el ángulo de pitch (theta)
     u3 = max(np.radians(-30), min(np.radians(30), u3))  # Limitar el ángulo de yaw (psi)
 
-    phi_s = max(np.radians(-30), min(phi_s, np.radians(30)))  # Limitar el ángulo de roll (phi)
-
     g = 9.81 # Gravedad en m/s²
     St = 64 # Área del estabilizador horizontal m²
     S = 260 # Área del ala m²
@@ -271,101 +272,113 @@ def xdot(X, U):
     Cl = Cl_wb + Cl_t
 
     #Total drag coefficient
-    Cd = 0.13 + 0.07*(n*alpha+0.654)**2
+    # Total drag coefficient (spec eq. 2.31): CD = 0.13 + 0.07*(CLwb - 0.45)^2
+    Cd = 0.13 + 0.07*(Cl_wb - 0.45)**2
 
-    # Total side forces coefficient
-    Cy = -16*beta + 0.24*u3
+    # Total side-force coefficient (spec eq. 2.32) — NOTE: -1.6, not -16
+    Cy = -1.6*beta + 0.24*u3
 
-    #Rotate from Fs to Fw
-    C_s_to_w= np.array([[np.cos(beta), np.sin(beta), 0],
-                     [-np.sin(beta), np.cos(beta), 0],
-                     [0, 0, 1]])
-    CF_s = np.array([Cd, Cy, Cl]).T
-    CF_w = C_s_to_w @ CF_s
+    # ── Dimensional aerodynamic forces ────────────────────────────────────────
+    D = Cd * Q * S   # drag  (positive scalar)
+    Y_sf = Cy * Q * S   # side force
+    L = Cl * Q * S   # lift  (positive scalar)
 
-    # Aerodynamic forces in body frame
-    D = -CF_w[0] * Q * S
-    Y = CF_w[1] * Q * S
-    L = -CF_w[2] * Q * S
-    Fas = np.array([D, Y, L]) # Fuerzas aerodinámicas 
+    # Transform wind-axis forces to body axes (spec section 2.3.4 explicit formulas)
+    #   FxA =  L sinα - D cosα cosβ - Y cosα sinβ
+    #   FyA = -D sinβ  + Y cosβ
+    #   FzA = -L cosα - D sinα cosβ - Y sinα sinβ
+    ca, sa = np.cos(alpha), np.sin(alpha)
+    cb, sb = np.cos(beta),  np.sin(beta)
+    FxA =  L*sa - D*ca*cb - Y_sf*ca*sb
+    FyA = -D*sb  + Y_sf*cb
+    FzA = -L*ca - D*sa*cb - Y_sf*sa*sb
+    Fab = np.array([FxA, FyA, FzA])   # aerodynamic force in body frame
 
-    R_s_to_body = np.array([[np.cos(alpha), 0, -np.sin(alpha)],
-                            [0, 1, 0], 
-                            [np.sin(alpha), 0, np.cos(alpha)]])
-    Fab = R_s_to_body @ Fas
+    # ── Aerodynamic moment coefficients about CoG in body frame (spec eq. 2.33) ──
+    # Cl, Cm, Cn are given directly about the CoG — no AC→CG transfer needed.
+    b    = 44.8   # m — wingspan (spec Table 2.4)
+    l_Va = (c_mac / Va) if Va > 1e-3 else 0.0   # generalised length / airspeed
 
-    # Nondimensional aero moment coefficient about the center of gravity in Fb
-    n_dash = np.array([-1.4*beta,
-                       -0.59 - 3.1*(St*lt)/(S*c_mac)*(alpha-epsilon), 
-                       (1-alpha*180/(15*np.pi))*beta])  # 180/(15π) converts alpha [rad] to units of 15° steps
-    
-    c_mac_Va = (c_mac/Va) if Va > 1e-3 else 0.0
-    dcm_dx = c_mac_Va * np.array([[-11, 0, 5],
-                                    [0, -4.03*(St*lt**2)/(S*c_mac**2), 0],  
-                                    [1.7, 0, -11.5*beta]])
-    dcm_du = np.array([[-0.6, 0, 0.22],
-                    [0, -3.1*(St*lt)/(S*c_mac), 0],  
-                    [0, 0, -0.63]])
+    # Static (alpha/beta) terms
+    n_dash = np.array([
+        -1.4*beta,
+        -0.59 - 3.1*(St*lt)/(S*c_mac)*(alpha - epsilon),
+        (1.0 - alpha*(180.0/(15.0*np.pi)))*beta
+    ])
 
-    #The moments about the aerodynamic center in the body frame
-    Cm_ac_b = n_dash + dcm_dx @ np.array([p_s, q_s, r_s]) + dcm_du @ np.array([u1, u2, u3])
-    M_a_ac_b = c_mac * Q * S * Cm_ac_b  # shape (3,)
-    
-    r_cg = np.array([0.23*c_mac, 0, 0.1*c_mac]) # Vector desde el centro de gravedad al centro aerodinámico en el sistema de referencia del body
-    r_ac = np.array([0.12*c_mac, 0, 0])
+    # Rate-damping matrix (l/V factor; spec eq. 2.33)
+    dcm_dx = l_Va * np.array([
+        [-11.0,  0.0,                           5.0  ],
+        [  0.0, -4.03*(St*lt**2)/(S*c_mac**2),  0.0  ],
+        [  1.7,  0.0,                          -11.5  ]   # -11.5, NOT -11.5*beta
+    ])
 
-    X_cg = r_cg[0]
-    Y_cg = r_cg[1]
-    Z_cg = r_cg[2]
+    # Control-effectiveness matrix (spec eq. 2.33)
+    dcm_du = np.array([
+        [-0.6,  0.0,                    0.22],
+        [ 0.0, -3.1*(St*lt)/(S*c_mac), 0.0 ],
+        [ 0.0,  0.0,                   -0.63]
+    ])
+
+    # Full nondimensional moment-coefficient vector [Cl_total, Cm_total, Cn_total]
+    Cm_b = n_dash + dcm_dx @ np.array([p_s, q_s, r_s]) + dcm_du @ np.array([u1, u2, u3])
+
+    # Dimensional moments about CoG (spec section 2.3.4)
+    #   Rolling  moment ℒ = Cl * qbar * S * b       (b = wingspan)
+    #   Pitching moment ℳ = Cm * qbar * S * c_mac
+    #   Yawing   moment ℕ = Cn * qbar * S * b
+    Ma_cg_b = Q * S * np.array([
+        Cm_b[0] * b,        # ℒ — rolling  moment about CoG
+        Cm_b[1] * c_mac,    # ℳ — pitching moment about CoG
+        Cm_b[2] * b         # ℕ — yawing   moment about CoG
+    ])
 
 
-    Ma_cg_b = M_a_ac_b + np.cross(Fab, (r_cg - r_ac))
-    
-    #Propulsion effects
-    F1 = u4*m*g
-    F2 = u5*m*g   #m es la masa del avión, g es la gravedad
-    F_prop_1 = np.array([F1, 0, 0]) # Asumiendo que la fuerza de propulsión actúa en el eje X del body
-    F_prop_2 = np.array([F2, 0, 0]) # Asumiendo que la fuerza de propulsión actúa en el eje X del body
-    F_prop_total = F_prop_1 + F_prop_2
 
-    #Momentos que generan las fuerzas de propulsion en el centro de gravedad y en el eje de referencia del body
-    r_apt_1 = np.array([X_apt_1, Y_apt_1, Z_apt_1])
+
+
+
+    # ── Engine thrust forces and moments (spec eqs. 2.34–2.37) ──────────────────
+    F1 = u4 * m * g   # thrust of engine 1  [N]
+    F2 = u5 * m * g   # thrust of engine 2  [N]
+    F_prop_total = np.array([F1 + F2, 0.0, 0.0])   # both act along x_body
+
+    # Moment arms are given in body axes w.r.t. CoG (spec Table 2.4 / eq. 2.37)
+    r_apt_1 = np.array([X_apt_1, Y_apt_1, Z_apt_1])   # already relative to CoG
     r_apt_2 = np.array([X_apt_2, Y_apt_2, Z_apt_2])
-    r_cg_vec = np.array([X_cg, Y_cg, Z_cg])
-
-    M_engine_cg_1_body = np.cross(r_apt_1 - r_cg_vec, F_prop_1)   # Momento generado por la fuerza de propulsion del primer motor respecto al centro de gravedad en el sistema de referencia del body
-    M_engine_cg_2_body = np.cross(r_apt_2 - r_cg_vec, F_prop_2)   # Momento generado por la fuerza de propulsion del segundo motor respecto al centro de gravedad en el sistema de referencia del body
-
-    M_total_engine_cg_b = M_engine_cg_1_body + M_engine_cg_2_body
-
+    M_total_engine_cg_b = (np.cross(r_apt_1, np.array([F1, 0.0, 0.0]))
+                         + np.cross(r_apt_2, np.array([F2, 0.0, 0.0])))
 
     # Gravity effects
-    F_gravity_ned = np.array([0, 0, m*g]) # Fuerza de gravedad en el sistema de referencia NED
-    R_body_to_NED, _, _, _, _ = rotation_matrix(phi=np.degrees(phi_s), theta=np.degrees(theta_s), psi=np.degrees(psi_s), v_body=np.array([u_s, v_s, w_s]))
-    F_gravity_body = R_body_to_NED.T @ F_gravity_ned # Fuerza de gravedad en el sistema de referencia del body
+    F_gravity_ned = np.array([0.0, 0.0, m*g])
+    R_body_to_NED, _, _, _, _ = rotation_matrix(
+        phi=np.degrees(phi_s), theta=np.degrees(theta_s),
+        psi=np.degrees(psi_s), v_body=np.array([u_s, v_s, w_s]))
+    F_gravity_body = R_body_to_NED.T @ F_gravity_ned
 
-
-    # Explicit first order form
-
+    # ── Equations of motion ─────────────────────────────────────────────────────
     F_total_body = Fab + F_prop_total + F_gravity_body
+    lineal_acceleration = (1.0/m) * F_total_body - np.cross(w_be, V_body)
+    u_dot, v_dot, w_dot = lineal_acceleration
 
-    lineal_acceleration = 1/m * F_total_body - np.cross(w_be, V_body) # Aceleración en el body frame (u_dot, v_dot, w_dot)
-    u_dot, v_dot, w_dot = lineal_acceleration[0], lineal_acceleration[1], lineal_acceleration[2]
+    M_cg = Ma_cg_b.flatten() + M_total_engine_cg_b.flatten()   # total moment about CoG [N·m]
 
-    M_cg = Ma_cg_b.flatten() + M_total_engine_cg_b.flatten() # Momento total en el centro de gravedad en el sistema de referencia del body
-    Ib = np.array([[Ixx, Ixy, Ixz],
-                    [Iyx, Iyy, Iyz],
-                    [Izx, Izy, Izz]]) # Matriz de inercia del avión en el sistema de referencia del body
-    
-    Ib = m*Ib # Multiplicar por la masa de la aeronave
+    # Inertia tensor (spec eq. 2.11): I = m * [[Ix, 0, -Ixz], [0, Iy, 0], [-Ixz, 0, Iz]]
+    # Values in the spec are in m²; multiplying by mass m gives kg·m².
+    # Sign convention: off-diagonal terms are NEGATIVE (-Ixz).
+    Ib = m * np.array([
+        [ Ixx,  0.0, -Ixz],
+        [ 0.0,  Iyy,  0.0],
+        [-Ixz,  0.0,  Izz]
+    ])
 
     rotational_acceleration = np.linalg.inv(Ib) @ (M_cg - np.cross(w_be, Ib @ w_be))
     p_dot, q_dot, r_dot = rotational_acceleration[0], rotational_acceleration[1], rotational_acceleration[2]
 
     # Euler angle rates — angular_rates_to_euler(p, q, r, phi_deg, theta_deg)
-    # phi_s, theta_s are in radians; the helper function expects degrees
+    # euler_rates returns values in rad/s because p, q, r are in rad/s
     euler_rates = angular_rates_to_euler(p_s, q_s, r_s, np.degrees(phi_s), np.degrees(theta_s))
-    phi_dot, theta_dot, psi_dot = np.radians(euler_rates[0]), np.radians(euler_rates[1]), np.radians(euler_rates[2])
+    phi_dot, theta_dot, psi_dot = euler_rates[0], euler_rates[1], euler_rates[2]
 
     x_dot = np.array([u_dot, v_dot, w_dot, p_dot, q_dot, r_dot, phi_dot, theta_dot, psi_dot])
     return x_dot
@@ -428,34 +441,34 @@ def simulate(t_end, dt, X0, U_func):
     return t, X
 
 def calc_L_D(X, U):
+    """Compute dimensional Lift and Drag forces consistent with the xdot aerodynamics."""
     u_s, v_s, w_s = X[0], X[1], X[2]
     q_s = X[4]
     u2 = max(np.radians(-25), min(np.radians(10), U[1]))
     Va = np.sqrt(u_s**2 + v_s**2 + w_s**2)
     alpha = np.arctan2(w_s, u_s) if Va > 1e-3 else 0.0
-    beta = np.arcsin(v_s / Va) if Va > 1e-3 else 0.0
-    Q = 0.5 * 1.225 * Va**2
+    beta  = np.arcsin(np.clip(v_s / Va, -1, 1)) if Va > 1e-3 else 0.0
+    Q  = 0.5 * 1.225 * Va**2
+    S  = 260.0
+    St = 64.0
+    lt = 24.8
+    c_mac = 6.6
     n = 5.5
-    alpha_lift_0 = -11.5 * np.pi/180
-    if alpha < 14.5*np.pi/180:
-        Cl_wb = n*(alpha-alpha_lift_0)
+    alpha_lift_0 = -11.5 * np.pi / 180
+    # Lift coefficient (spec eq. 2.24–2.28)
+    if alpha < 14.5 * np.pi / 180:
+        Cl_wb = n * (alpha - alpha_lift_0)
     else:
         Cl_wb = 15.212 - 155.2*alpha + 609.2*alpha**2 - 768.5*alpha**3
-    epsilon = 0.25 * (alpha - alpha_lift_0)
-    alpha_t = alpha - epsilon + u2 + (1.3*q_s*24.8/Va if Va > 1e-3 else 0.0)
-    Cl_t = 3.1*64/260 * alpha_t
-    Cl = Cl_wb + Cl_t
-    Cd = 0.13 + 0.07*(n*alpha+0.654)**2
-    
-    C_s_to_w = np.array([[np.cos(beta), np.sin(beta), 0],
-                         [-np.sin(beta), np.cos(beta), 0],
-                         [0, 0, 1]])
-    # We only need Drag and Lift
-    Cy = -16*beta + 0.24*U[2] # Just for completeness of matrix multiplication
-    CF_w = C_s_to_w @ np.array([Cd, Cy, Cl]).T
-    D = -CF_w[0] * Q * 260
-    L = -CF_w[2] * Q * 260
-    return L, D
+    epsilon  = 0.25 * (alpha - alpha_lift_0)
+    alpha_t  = alpha - epsilon + u2 + (1.3*q_s*lt/Va if Va > 1e-3 else 0.0)
+    Cl       = Cl_wb + 3.1*(St/S)*alpha_t
+    # Drag coefficient (spec eq. 2.31)
+    Cd = 0.13 + 0.07*(Cl_wb - 0.45)**2
+    # Dimensional forces
+    L_force =  Cl * Q * S   # lift  (positive up in wind frame)
+    D_force =  Cd * Q * S   # drag  (positive, opposing motion)
+    return L_force, D_force
 
 def run_rcam_scenario(scenario_id):
     """
@@ -480,7 +493,7 @@ def run_rcam_scenario(scenario_id):
     elif scenario_id == 3: # Engine 1 Shutdown
         def U_func(time):
             U = U_nom.copy()
-            if time >= 30:
+            if time >= 80:
                 U[3] = 0.0
             return U
         t, X = simulate(t_end, dt, X0_nom, U_func)
