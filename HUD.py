@@ -2,7 +2,7 @@ import sys
 import numpy as np
 import csv
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
-                             QHBoxLayout, QSlider, QLabel, QSplitter, QPushButton, QTabWidget, QComboBox)
+                             QHBoxLayout, QSlider, QLabel, QSplitter, QPushButton, QTabWidget)
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF
 from PyQt6.QtGui import QPainter, QPen, QColor, QFont, QImage, QPolygonF
 import calculos
@@ -534,17 +534,6 @@ class HUDInterface(QMainWindow):
         splitter.setStretchFactor(1, 2)
 
         ctrl_layout = QHBoxLayout()
-        
-        self.combo_scenario = QComboBox()
-        self.combo_scenario.addItems([
-            "0: Drone IMU CSV Data",
-            "1: RCAM Nominal Simulation",
-            "2: RCAM Aileron Deflection (+5°)",
-            "3: RCAM Engine 1 Shutdown",
-            "4: RCAM PSO Trim (78 m/s, NE)"
-        ])
-        self.combo_scenario.currentIndexChanged.connect(self.on_scenario_changed)
-        ctrl_layout.addWidget(self.combo_scenario)
 
         self.play_button = QPushButton("Play")
         self.play_button.clicked.connect(self.toggle_play)
@@ -621,25 +610,17 @@ class HUDInterface(QMainWindow):
         
         
         splitter.setSizes([400, 400]) # Equal distribution or adjust as needed
-        self.load_simulation_data(0)
+        self.load_simulation_data()
 
-    def on_scenario_changed(self, index):
-        self.load_simulation_data(index)
-
-    def load_simulation_data(self, scenario_index):
+    def load_simulation_data(self):
         if self.is_playing:
             self.toggle_play()
 
-        if scenario_index == 0:
-            # Load CSV
-            with open(self.csv_file, 'r', newline='', encoding='utf-8') as f:
-                imu = list(csv.DictReader(f))
-            t0 = float(imu[0]["time_s"])
-            (time_l, vNED_l, Pned_l, phi_l, theta_l, psi_l, p_l, q_l, r_l, u_l, v_l, w_l) = calculos.integrate_imu_data(imu)
-        else:
-            # Run RCAM simulation
-            t0 = 0.0
-            (time_l, vNED_l, Pned_l, phi_l, theta_l, psi_l, p_l, q_l, r_l, u_l, v_l, w_l) = calculos.run_rcam_scenario(scenario_index)
+        # Load CSV/IMU data
+        with open(self.csv_file, 'r', newline='', encoding='utf-8') as f:
+            imu = list(csv.DictReader(f))
+        t0 = float(imu[0]["time_s"])
+        (time_l, vNED_l, Pned_l, phi_l, theta_l, psi_l, p_l, q_l, r_l, u_l, v_l, w_l) = calculos.integrate_imu_data(imu)
 
         # Prepend initial state
         _z = np.array([0., 0., 0.])

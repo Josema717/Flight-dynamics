@@ -438,3 +438,5 @@ README.md
 export_trajectory.py
 run_visualization.py
 validate_csv.py
+test.stl
+debug_sim.py

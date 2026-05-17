@@ -137,6 +137,20 @@ class Plot3DWidget(QWidget):
         self.elev = 30
         self.azim = 45
         self.axis_length = 10
+        self.last_pos = None
+
+    def mousePressEvent(self, event):
+        self.last_pos = event.position()
+
+    def mouseMoveEvent(self, event):
+        if self.last_pos is not None:
+            dx = event.position().x() - self.last_pos.x()
+            dy = event.position().y() - self.last_pos.y()
+            self.azim -= dx * 0.5
+            self.elev += dy * 0.5  # Positive dy means mouse moved down, which corresponds to looking from higher up
+            self.elev = max(-90, min(90, self.elev))
+            self.last_pos = event.position()
+            self.update()
 
     def project(self, x, y, z, cx, cy, scale):
         az = np.deg2rad(self.azim)
@@ -462,7 +476,7 @@ class RCAM_HUD_Interface(QMainWindow):
         # ComboBox items: 0->Nominal(1), 1->Aileron(2), 2->Engine(3), 3->PSO(4)
         rcam_scenario_id = scenario_index + 1
         t0 = 0.0
-        (time_l, vNED_l, Pned_l, phi_l, theta_l, psi_l, p_l, q_l, r_l, u_l, v_l, w_l) = calculos.run_rcam_scenario(rcam_scenario_id)
+        (time_l, vNED_l, Pned_l, phi_l, theta_l, psi_l, p_l, q_l, r_l, u_l, v_l, w_l, L_l, D_l) = calculos.run_rcam_scenario(rcam_scenario_id)
 
         _z = np.array([0., 0., 0.])
         self.time_list  = [t0]   + time_l
@@ -479,6 +493,10 @@ class RCAM_HUD_Interface(QMainWindow):
         self.u_list     = [u0]  + u_l
         self.v_list     = [v0]  + v_l
         self.w_list     = [w0]  + w_l
+        
+        L0, D0 = (L_l[0], D_l[0]) if len(L_l) > 0 else (0.0, 0.0)
+        self.L_list     = [L0] + L_l
+        self.D_list     = [D0] + D_l
         
         # Calculate full aero histories
         self.alpha_list = []
@@ -540,6 +558,7 @@ class RCAM_HUD_Interface(QMainWindow):
         
         u, v, w = self.u_list[idx], self.v_list[idx], self.w_list[idx]
         phi, theta, psi = self.phi_list[idx], self.theta_list[idx], self.psi_list[idx]
+        p, q, r = self.p_list[idx], self.q_list[idx], self.r_list[idx]
         v_body = np.array([u, v, w])
         v_NED = self.v_NED_list[idx]
         
@@ -547,7 +566,10 @@ class RCAM_HUD_Interface(QMainWindow):
         
         alpha = self.alpha_list[idx]
         beta = self.beta_list[idx]
+        Va = self.Va_list[idx]
         climb = calculos.climb_angle(v_NED=v_NED)
+        L_force = self.L_list[idx]
+        D_force = self.D_list[idx]
         
         Pn       = self.P_ned_list[idx][0]
         Pe       = self.P_ned_list[idx][1]
@@ -555,10 +577,18 @@ class RCAM_HUD_Interface(QMainWindow):
         Pd       = -altitude                  
 
         text = (
+            f"Position (NED):\n"
+            f"North = {Pn:.2f} m\n"
+            f"East  = {Pe:.2f} m\n"
+            f"Alt   = {altitude:.2f} m\n\n"
             f"Velocity on the body:\n"
             f"u = {u:.2f} m/s\n"
             f"v = {v:.2f} m/s\n"
-            f"w = {w:.2f} m/s\n\n"
+            f"w = {w:.2f} m/s\n"
+            f"Va = {Va:.2f} m/s\n\n"
+            f"Aerodynamic Forces:\n"
+            f"Lift = {L_force:.1f} N\n"
+            f"Drag = {D_force:.1f} N\n\n"
             f"Angles:\n"
             f"alpha = {alpha:.2f}°\n"
             f"beta  = {beta:.2f}°\n"
@@ -566,7 +596,11 @@ class RCAM_HUD_Interface(QMainWindow):
             f"Euler:\n"
             f"phi   = {phi:.2f}°\n"
             f"theta = {theta:.2f}°\n"
-            f"psi   = {psi:.2f}°"
+            f"psi   = {psi:.2f}°\n\n"
+            f"Angular Rates:\n"
+            f"p = {p:.3f} rad/s\n"
+            f"q = {q:.3f} rad/s\n"
+            f"r = {r:.3f} rad/s"
         )
         self.text_canvas.set_text(text)
 
@@ -599,12 +633,11 @@ class RCAM_HUD_Interface(QMainWindow):
             [-1.0,  0.0,  0.0],
             [-0.2,  1.0,  0.0],
             [-0.2, -1.0,  0.0],
-            [-1.0,  0.0, 0.4],
+            [-1.0,  0.0, -0.4],
             [-1.0,  0.0,  0.0],
         ]).T
         
         pts_ned = R_body_to_NED @ pts_body * body_scale
-        pts_ned[2, :] = -pts_ned[2, :]
         
         def map_ned(pts_ned, indices):
             return [(pts_ned[0,i], pts_ned[1,i], pts_ned[2,i]) for i in indices]
