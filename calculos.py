@@ -439,7 +439,8 @@ def pso_trim():
     n_particles = 30
     n_iters = 100
     dim = 3
-    bounds = np.array([[-0.2, 0.2], [-0.5, 0.5], [0.0, 1.0]])
+    bounds = np.array([[-0.2, 0.2], [-0.5, 0.5], [0.0, 1.0]])  #Se establece el limite de angulo de ataque, delta elevar y delta throttle
+    # El limite de angulo de ataque, si se pasa a grados esta entre -11.5 y 11.5 grados.
     X_pos = np.random.uniform(bounds[:,0], bounds[:,1], (n_particles, dim))
     V = np.zeros((n_particles, dim))
     
