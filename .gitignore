@@ -441,3 +441,6 @@ validate_csv.py
 test.stl
 debug_sim.py
 GARTEUR_TP-088-3_Section2.md
+exportar_escenarios.py
+resultados_escenarios/
+resultados_escenarios.rar

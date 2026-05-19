@@ -219,6 +219,11 @@ def xdot(X, U):
     p_s, q_s, r_s   = X[3], X[4], X[5]   # angular rates [rad/s]
     phi_s, theta_s, psi_s = X[6], X[7], X[8]  # Euler angles [rad]
 
+#########################################################
+
+# Step 1 control limits and constants
+
+#########################################################
     u1, u2, u3, u4, u5 = U[0], U[1], U[2], U[3], U[4]  # control inputs
     u1 = max(np.radians(-25), min(np.radians(25), u1))  # Estableciendo los limites de los controles en radianes
     u2 = max(np.radians(-25), min(np.radians(10), u2))  # Limitar el ángulo de pitch (theta)
@@ -241,13 +246,23 @@ def xdot(X, U):
     Y_apt_2 = -7.94 # Posición Y del segundo motor en el eje del body [m]
     Z_apt_2 = 1.9 # Posición Z del segundo motor en el eje del body [m]
 
+############################################################
 
+# Step 2: Intermediate variables
+
+#############################################################
     Va = np.sqrt(u_s**2 + v_s**2 + w_s**2)
     alpha = np.arctan2(w_s, u_s) if Va > 1e-3 else 0.0
     beta = np.arcsin(v_s / Va) if Va > 1e-3 else 0.0
     Q = 0.5 * 1.225 * Va**2 # Presión dinámica (ρ * V² / 2)
     w_be = np.array([p_s, q_s, r_s])  # Velocidad angular en el body [p, q, r]
     V_body = np.array([u_s, v_s, w_s])  # Velocidad en el sistema de referencia del body
+
+############################################################
+
+#Step 3: Nontedimensional aerodynamic coefficients in stability frame
+
+############################################################
 
     # Calculo del Cl del ala y el cuerpo
     n = 5.5
@@ -283,6 +298,12 @@ def xdot(X, U):
     Y_sf = Cy * Q * S   # side force
     L = Cl * Q * S   # lift  (positive scalar)
 
+######################################################################
+
+#Step 4: Aerodynamic forces and moments in body frame
+
+######################################################################
+
     # Transform wind-axis forces to body axes (spec section 2.3.4 explicit formulas)
     #   FxA =  L sinα - D cosα cosβ - Y cosα sinβ
     #   FyA = -D sinβ  + Y cosβ
@@ -298,6 +319,12 @@ def xdot(X, U):
     # Cl, Cm, Cn are given directly about the CoG — no AC→CG transfer needed.
     b    = 44.8   # m — wingspan (spec Table 2.4)
     l_Va = (c_mac / Va) if Va > 1e-3 else 0.0   # generalised length / airspeed
+
+######################################################################
+
+#Step 5: Aerodynamic moments coefficients about aerodynamic center in body frame
+
+#######################################################################
 
     # Static (alpha/beta) terms
     n_dash = np.array([
@@ -323,6 +350,12 @@ def xdot(X, U):
     # Full nondimensional moment-coefficient vector [Cl_total, Cm_total, Cn_total]
     Cm_b = n_dash + dcm_dx @ np.array([p_s, q_s, r_s]) + dcm_du @ np.array([u1, u2, u3])
 
+##########################################################################
+
+# Step 6: Dimensional forces and moments about CoG in body frame
+
+##########################################################################
+
     # Dimensional moments about CoG (spec section 2.3.4)
     #   Rolling  moment ℒ = Cl * qbar * S * b       (b = wingspan)
     #   Pitching moment ℳ = Cm * qbar * S * c_mac
@@ -334,8 +367,11 @@ def xdot(X, U):
     ])
 
 
+###################################################################
 
+# Step 7: Propulsion effects
 
+###################################################################
 
 
     # ── Engine thrust forces and moments (spec eqs. 2.34–2.37) ──────────────────
@@ -348,6 +384,12 @@ def xdot(X, U):
     r_apt_2 = np.array([X_apt_2, Y_apt_2, Z_apt_2])
     M_total_engine_cg_b = (np.cross(r_apt_1, np.array([F1, 0.0, 0.0]))
                          + np.cross(r_apt_2, np.array([F2, 0.0, 0.0])))
+
+#################################################################
+
+# Step 8: gravity effects and equations of motion
+
+#################################################################
 
     # Gravity effects
     F_gravity_ned = np.array([0.0, 0.0, m*g])
