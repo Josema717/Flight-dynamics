@@ -4,7 +4,74 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QSlider, QLabel, QSplitter, QPushButton, QTabWidget, QComboBox)
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF
 from PyQt6.QtGui import QPainter, QPen, QColor, QFont, QImage, QPolygonF
+from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+from OpenGL.GL import *
+from OpenGL.GLU import *
 import calculos
+import struct
+
+def load_stl(filepath):
+    try:
+        with open(filepath, 'rb') as f:
+            f.seek(0, 2)
+            file_size = f.tell()
+            if file_size >= 84:
+                f.seek(80)
+                num_triangles_bytes = f.read(4)
+                if len(num_triangles_bytes) == 4:
+                    num_triangles = struct.unpack('<I', num_triangles_bytes)[0]
+                    expected_size = 84 + num_triangles * 50
+                    if file_size == expected_size:
+                        verts = []
+                        for _ in range(num_triangles):
+                            f.read(12) # normal
+                            v1 = struct.unpack('<3f', f.read(12))
+                            v2 = struct.unpack('<3f', f.read(12))
+                            v3 = struct.unpack('<3f', f.read(12))
+                            f.read(2) # attr
+                            verts.append([v1, v2, v3])
+                        return normalize_stl(verts)
+    except Exception as e:
+        print(f"Binary STL read error: {e}")
+        
+    try:
+        verts = []
+        with open(filepath, 'r', encoding='utf-8') as f:
+            current_poly = []
+            for line in f:
+                parts = line.strip().split()
+                if not parts: continue
+                if parts[0] == 'vertex' and len(parts) >= 4:
+                    current_poly.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                elif parts[0] == 'endfacet':
+                    if len(current_poly) == 3:
+                        verts.append(current_poly)
+                    current_poly = []
+        return normalize_stl(verts)
+    except Exception as e:
+        print(f"ASCII STL read error: {e}")
+        return []
+
+def normalize_stl(verts):
+    if not verts: return []
+    all_v = [v for tri in verts for v in tri]
+    xs = [v[0] for v in all_v]
+    ys = [v[1] for v in all_v]
+    zs = [v[2] for v in all_v]
+    cx = (min(xs) + max(xs)) / 2
+    cy = (min(ys) + max(ys)) / 2
+    cz = (min(zs) + max(zs)) / 2
+    max_dim = max(max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs))
+    if max_dim == 0: max_dim = 1
+    
+    normalized_verts = []
+    for tri in verts:
+        new_tri = []
+        for v in tri:
+            new_v = ((v[0] - cx) / max_dim * 2, (v[1] - cy) / max_dim * 2, (v[2] - cz) / max_dim * 2)
+            new_tri.append(new_v)
+        normalized_verts.append(new_tri)
+    return normalized_verts
 
 class TextCanvas(QWidget):
     def __init__(self, parent=None):
@@ -127,19 +194,22 @@ class ViewsCanvas(QWidget):
         layout.addWidget(self.pitch_view)
         layout.addWidget(self.roll_view)
 
-class Plot3DWidget(QWidget):
+class Plot3DWidget(QOpenGLWidget):
     def __init__(self, title="3D"):
         super().__init__()
         self.title = title
         self.lines = []
         self.texts = []
         self.scatter = []
-        # polygons: list of (vertex_list [(x,y,z),...], fill_color_str, edge_color_str)
-        self.polygons = []
         self.elev = 30
         self.azim = 45
         self.axis_length = 10
         self.last_pos = None
+
+        self.aircraft_verts = []
+        self.aircraft_dl = None
+        self.aircraft_R = np.eye(3)
+        self.body_scale = 1.0
 
     def mousePressEvent(self, event):
         self.last_pos = event.position()
@@ -154,73 +224,119 @@ class Plot3DWidget(QWidget):
             self.last_pos = event.position()
             self.update()
 
-    def project(self, x, y, z, cx, cy, scale):
+    def set_aircraft(self, verts):
+        self.aircraft_verts = verts
+        self._needs_compile = True
+        self.update()
+
+    def _compile_aircraft(self):
+        if self.aircraft_dl is not None:
+            glDeleteLists(self.aircraft_dl, 1)
+        self.aircraft_dl = glGenLists(1)
+        glNewList(self.aircraft_dl, GL_COMPILE)
+        
+        glBegin(GL_TRIANGLES)
+        for tri in self.aircraft_verts:
+            for v in tri:
+                glVertex3f(v[0], v[1], v[2])
+        glEnd()
+        glEndList()
+        self._needs_compile = False
+
+    def initializeGL(self):
+        glClearColor(30/255, 30/255, 40/255, 1.0)
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glEnable(GL_LINE_SMOOTH)
+        glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+
+    def resizeGL(self, w, h):
+        glViewport(0, 0, w, h)
+
+    def paintGL(self):
+        if getattr(self, '_needs_compile', False):
+            self._compile_aircraft()
+            
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity()
+        w, h = self.width(), self.height()
+        if h == 0: h = 1
+        gluPerspective(45.0, w / h, 0.1, 1000.0)
+
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
+
+        cam_dist = self.axis_length * 2.5
         az = np.deg2rad(self.azim)
         el = np.deg2rad(self.elev)
-        x_rot = x * np.cos(az) + y * np.sin(az)
-        y_rot = -x * np.sin(az) + y * np.cos(az)
-        xp = y_rot
-        yp = -x_rot * np.sin(el) + z * np.cos(el)
-        return cx + xp * scale, cy + yp * scale
+        cx = cam_dist * np.cos(el) * np.sin(az)
+        cy = cam_dist * np.cos(el) * np.cos(az)
+        cz = cam_dist * np.sin(el)
 
-    def _poly_depth(self, verts):
-        """Approximate painter's-algorithm depth: mean projected Z of centroid."""
-        az = np.deg2rad(self.azim)
-        el = np.deg2rad(self.elev)
-        xs = np.mean([v[0] for v in verts])
-        ys = np.mean([v[1] for v in verts])
-        zs = np.mean([v[2] for v in verts])
-        x_rot = xs * np.cos(az) + ys * np.sin(az)
-        depth = x_rot * np.cos(el) - zs * np.sin(el)   # larger = farther
-        return depth
+        gluLookAt(cx, cy, cz, 0, 0, 0, 0, 0, -1)
+        
+        # Invert the Y axis globally so that East goes in the opposite direction
+        # This correctly mirrors all objects including the STL and velocity vector
+        glScalef(1, -1, 1)
 
-    def paintEvent(self, event):
+        glDisable(GL_LIGHTING)
+        for pts, color_hex, width in self.lines:
+            qcol = QColor(color_hex)
+            glColor4f(qcol.redF(), qcol.greenF(), qcol.blueF(), qcol.alphaF())
+            glLineWidth(width)
+            glBegin(GL_LINE_STRIP)
+            for pt in pts:
+                glVertex3f(pt[0], pt[1], pt[2])
+            glEnd()
+
+        glPointSize(5)
+        glBegin(GL_POINTS)
+        for pt in self.scatter:
+            x, y, z, c = pt
+            qc = QColor(c)
+            glColor3f(qc.redF(), qc.greenF(), qc.blueF())
+            glVertex3f(x, y, z)
+        glEnd()
+
+        if self.aircraft_dl is not None:
+            glPushMatrix()
+            # Rotation
+            R = self.aircraft_R
+            m = np.identity(4)
+            m[:3, :3] = R
+            glMultMatrixf(m.T.flatten())
+            glScalef(self.body_scale, self.body_scale, self.body_scale)
+            
+            # Alineación del STL respecto al marco del cuerpo (Body Frame)
+            glRotatef(180, 1, 0, 0) # 180 grados eje North (X)
+            glRotatef(90, 0, 0, 1)  # 90 grados eje Down (Z)
+            
+            # Color naranja vibrante para contrastar con el fondo oscuro
+            fill_c = QColor.fromRgb(227, 82, 5, 150)
+            glColor4f(fill_c.redF(), fill_c.greenF(), fill_c.blueF(), fill_c.alphaF())
+            glCallList(self.aircraft_dl)
+            glPopMatrix()
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
-        painter.fillRect(0, 0, w, h, QColor(30, 30, 40))  # dark background
         painter.setPen(QPen(QColor('#c9d1d9')))
         painter.drawText(10, 20, self.title)
 
-        cx, cy = w / 2, h / 2
-        scale = min(w, h) / (2.5 * max(1, self.axis_length))
+        model_view = glGetDoublev(GL_MODELVIEW_MATRIX)
+        proj = glGetDoublev(GL_PROJECTION_MATRIX)
+        view = glGetIntegerv(GL_VIEWPORT)
 
-        # --- axis / reference lines ---
-        for pts, color, width in self.lines:
-            painter.setPen(QPen(QColor(color), width))
-            poly = QPolygonF()
-            for pt in pts:
-                px, py = self.project(pt[0], pt[1], pt[2], cx, cy, scale)
-                poly.append(QPointF(px, py))
-            painter.drawPolyline(poly)
-
-        # --- filled surface polygons (depth-sorted back-to-front) ---
-        sorted_polys = sorted(self.polygons,
-                              key=lambda p: self._poly_depth(p[0]),
-                              reverse=True)   # paint farthest first
-        for verts, fill_color, edge_color in sorted_polys:
-            proj_pts = QPolygonF()
-            for v in verts:
-                px, py = self.project(v[0], v[1], v[2], cx, cy, scale)
-                proj_pts.append(QPointF(px, py))
-            fill_qc = QColor(fill_color)
-            edge_qc = QColor(edge_color)
-            painter.setBrush(fill_qc)
-            painter.setPen(QPen(edge_qc, 1))
-            painter.drawPolygon(proj_pts)
-
-        # --- labels ---
         for x, y, z, text, color in self.texts:
-            painter.setPen(QPen(QColor(color)))
-            px, py = self.project(x, y, z, cx, cy, scale)
-            painter.drawText(QPointF(px, py), text)
-
-        # --- scatter dots ---
-        for x, y, z, color in self.scatter:
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(color))
-            px, py = self.project(x, y, z, cx, cy, scale)
-            painter.drawEllipse(QPointF(px, py), 4, 4)
+            res = gluProject(x, y, z, model_view, proj, view)
+            if res:
+                winX, winY, winZ = res
+                winY = h - winY
+                if 0 <= winZ <= 1.0:
+                    painter.setPen(QPen(QColor(color)))
+                    painter.drawText(QPointF(winX, winY), text)
+        painter.end()
 
 
 
@@ -504,6 +620,10 @@ class RCAM_HUD_Interface(QMainWindow):
         """)
         
         splitter.setSizes([400, 400])
+        
+        self.stl_verts = load_stl('test.stl')
+        self.ned_canvas.set_aircraft(self.stl_verts)
+        
         self.load_simulation_data(0)
 
     def on_scenario_changed(self, index):
@@ -684,71 +804,11 @@ class RCAM_HUD_Interface(QMainWindow):
         R_body_to_NED, _, _, _, _ = calculos.rotation_matrix(phi, theta, psi, v_body)
         body_scale = axis_length * 0.45
 
-        # ── Aircraft surface geometry (body frame, X=nose, Y=right, Z=down) ─
-        #
-        #  Fuselage: nose(1,0,0) → tail(-1,0,0)   -- kept as a line
-        #  Wings:    swept trapezoid, symmetric about XZ-plane
-        #    Root LE: ( 0.05, ±0.10, 0)  Root TE: (-0.45, ±0.10, 0)
-        #    Tip  LE: (-0.15, ±1.00, 0)  Tip  TE: (-0.40, ±1.00, 0)
-        #  Horizontal stabilizer (elevator) at tail:
-        #    Root LE: (-0.75, ±0.10, 0)  Root TE: (-1.00, ±0.10, 0)
-        #    Tip  LE: (-0.85, ±0.42, 0)  Tip  TE: (-1.00, ±0.42, 0)
-        #  Vertical stabilizer: in XZ-plane (Y=0), swept upward (Z-)
-        #    Base LE: (-0.75,  0,  0.00)  Base TE: (-1.00,  0,  0.00)
-        #    Tip  LE: (-0.80,  0, -0.38)  Tip  TE: (-1.00,  0, -0.38)
-
-        # helper: rotate & scale body-frame point → NED tuple
-        def pt_ned(bx, by, bz):
-            p = R_body_to_NED @ np.array([bx, by, bz]) * body_scale
-            return (p[0], p[1], p[2])
-
-        # Fuselage (line)
-        lines3d.append(([pt_ned(1.0, 0, 0), pt_ned(-1.0, 0, 0)], '#000000', 3))
-
-        # Wing surfaces – semi-transparent orange/amber fill
-        WING_FILL  = QColor(255, 165,  30, 200)   # warm amber, α=200
-        WING_EDGE  = '#ffb347'
-        HSTAB_FILL = QColor(100, 200, 255, 200)   # cool blue
-        HSTAB_EDGE = '#7ec8e3'
-        VSTAB_FILL = QColor(180, 120, 255, 200)   # purple
-        VSTAB_EDGE = '#c084fc'
-
-        polys3d = []
-
-        for sign in (+1, -1):           # right (+Y) and left (-Y) panels
-            # Main wing
-            polys3d.append((
-                [pt_ned( 0.05, sign*0.10, 0),
-                 pt_ned(-0.15, sign*1.00, 0),
-                 pt_ned(-0.40, sign*1.00, 0),
-                 pt_ned(-0.45, sign*0.10, 0)],
-                WING_FILL.name(QColor.NameFormat.HexArgb),
-                WING_EDGE
-            ))
-            # Horizontal stabilizer
-            polys3d.append((
-                [pt_ned(-0.75, sign*0.10, 0),
-                 pt_ned(-0.85, sign*0.42, 0),
-                 pt_ned(-1.00, sign*0.42, 0),
-                 pt_ned(-1.00, sign*0.10, 0)],
-                HSTAB_FILL.name(QColor.NameFormat.HexArgb),
-                HSTAB_EDGE
-            ))
-
-        # Vertical stabilizer (one panel, tilted upward = negative Z in body)
-        polys3d.append((
-            [pt_ned(-0.75,  0,  0.00),
-             pt_ned(-0.80,  0, -0.38),
-             pt_ned(-1.00,  0, -0.38),
-             pt_ned(-1.00,  0,  0.00)],
-            VSTAB_FILL.name(QColor.NameFormat.HexArgb),
-            VSTAB_EDGE
-        ))
-
         self.ned_canvas.axis_length = axis_length
         self.ned_canvas.lines    = lines3d
         self.ned_canvas.texts    = texts3d
-        self.ned_canvas.polygons = polys3d
+        self.ned_canvas.aircraft_R = R_body_to_NED
+        self.ned_canvas.body_scale = body_scale
         self.ned_canvas.update()
 
         # Update Triple Plots
